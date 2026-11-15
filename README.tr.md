@@ -1,0 +1,128 @@
+# tplink-modem-mcp
+
+Yapay zekâ asistanının evdeki TP-Link modemi ya da internet sağlayıcısının verdiği TP-Link modemi okuyup
+yönetmesini sağlayan bir [MCP](https://modelcontextprotocol.io) sunucusu. Ağa kimin bağlı olduğunu, Wi-Fi
+sinyalinin ne kadar güçlü olduğunu, modemin neler kaydettiğini ve hangi cihazın ne zaman ağdan düşüp geri
+geldiğini asistana sorabilirsin.
+
+[![CI](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
+[![Python](https://img.shields.io/pypi/pyversions/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
+[![Lisans: GPL-3.0](https://img.shields.io/badge/lisans-GPL--3.0-blue)](LICENSE)
+
+![tplink-modem-mcp](assets/brand/banner.tr.png)
+
+[English](README.md)
+
+Altta [tplinkrouterc6u](https://github.com/AlexandrErohin/TP-Link-Archer-C6U) kütüphanesini kullanıyor, yani o
+kütüphanenin desteklediği her model çalışır. Bunun üstüne, kütüphanenin tanımadığı eski sağlayıcı yazılımları için
+ayrı bir istemci ekliyor. Türk Telekom'un verdiği **Archer C5v** buna örnek: arayüzüne
+`/cgi/login?UserName=…&Passwd=…` adresinden giriliyor.
+
+Asistana şunları sorabilirsin:
+
+- "Şu an Wi-Fi'da hangi cihazlar var, en zayıf sinyal hangisinde?"
+- "Televizyon sürekli kopuyor. Bugün ne zaman düştü, ne zaman geri geldi?"
+- "Son bir saatteki DHCP hatalarını göster."
+
+## Araç listesi
+
+| Araç | Ne yapar |
+| --- | --- |
+| `router_status` | Model, yazılım sürümü, internet bağlantısı (durum, dış IP, açık kalma süresi), yerel adres, Wi-Fi ağları, bağlı cihaz sayısı |
+| `list_clients` | Cihazların adı, IP'si, MAC adresi, kablolu mu Wi-Fi mı (bant ve ağ adıyla), sinyal (dBm) ve bağlantı hızı |
+| `find_client` | Ada, IP'ye ya da MAC adresine göre cihaz arar |
+| `client_history` | Bu sunucunun kaydettiği giriş, çıkış ve IP değişikliği olayları (modem böyle bir kayıt tutmaz) |
+| `wifi_networks` | Her Wi-Fi ağının bandı, kanalı, açık mı kapalı mı |
+| `router_logs` | Sistem kaydı; modüle, metne ya da önem derecesine göre süzülür |
+| `dhcp_leases`, `dhcp_reservations` | DHCP kiraları ve sabit adresler |
+| `ipv6_status` | WAN ve LAN IPv6 durumu |
+| `reboot_router` | Modemi yeniden başlatır, yalnız `confirm=true` ile |
+
+`reboot_router` dışındaki araçların hepsi yalnız okur.
+
+## Kurulum
+
+[uv](https://docs.astral.sh/uv/) ve modemin arayüz şifresi gerekiyor. Sunucu, modemle aynı ağdaki bir bilgisayarda
+çalışmalı.
+
+Claude Code:
+
+```sh
+claude mcp add tplink-modem -e TPLINK_PASSWORD='<modem şifresi>' -- uvx tplink-modem-mcp
+```
+
+Claude Desktop, Cursor ve JSON ayar dosyası kullanan öteki istemciler:
+
+```json
+{
+  "mcpServers": {
+    "tplink-modem": {
+      "command": "uvx",
+      "args": ["tplink-modem-mcp"],
+      "env": { "TPLINK_PASSWORD": "<modem şifresi>" }
+    }
+  }
+}
+```
+
+PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tplink-modem-mcp run tplink-modem-mcp`.
+
+## Ayarlar
+
+| Değişken | Varsayılan | |
+| --- | --- | --- |
+| `TPLINK_PASSWORD` | (zorunlu) | modem arayüzünün şifresi |
+| `TPLINK_HOST` | `http://192.168.1.1` | modemin adresi |
+| `TPLINK_USERNAME` | `admin` | |
+| `TPLINK_CLIENT` | otomatik | `legacy` ya da `TPLinkMRClient` gibi bir tplinkrouterc6u sınıf adı |
+| `TPLINK_TIMEOUT` | `20` | modeme giden her istek için saniye |
+| `TPLINK_PRESENCE_INTERVAL` | `60` | sunucu açıkken cihaz listesine kaç saniyede bir bakılacağı; `0` kapatır |
+| `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem-mcp` | cihaz geçmişinin tutulduğu klasör |
+| `TPLINK_LOG` | `WARNING` | kayıt düzeyi; `DEBUG` modeme giden her isteği gösterir |
+
+TP-Link modemler aynı anda tek yönetici oturumuna izin verir. Sunucu bütün istekleri tek bir oturumdan geçirir,
+eski tip istemci de girişini iki dakika açık tutar. Bu yüzden sunucu kullanılırken modemin arayüzü oturumu
+devralmak isteyip istemediğini sorabilir.
+
+## Cihaz geçmişi
+
+Modem, bir cihazın ne zaman gelip gittiğini hatırlamaz. Bu yüzden sunucu dakikada bir cihaz listesine bakar ve
+giriş, çıkış ve IP değişikliklerini klasördeki `presence.jsonl` dosyasına yazar. Bunu yalnız açıkken yapar.
+
+Geçmişin gece gündüz tutulması için hep açık duran bir bilgisayarda `tplink-modem-mcp sample` komutunu dakikada
+bir zamanlayıcıyla çalıştır, MCP sunucusunu da `TPLINK_PRESENCE_INTERVAL=0` ile başlat. Böylece dosyaya yalnız
+zamanlayıcı yazar:
+
+```sh
+* * * * * TPLINK_PASSWORD=... uvx tplink-modem-mcp sample
+```
+
+## Denendiği modemler
+
+- Archer C5v v1, yazılım v1.8 (Türk Telekom), eski tip istemciyle.
+
+tplinkrouterc6u'nun desteklediği modellerin onun üzerinden çalışması gerekir. Başka bir modelde denediysen
+çalışsa da çalışmasa da bir
+[model raporu aç](https://github.com/YakupEmreYerli/tplink-modem-mcp/issues/new?template=model-report.yml).
+
+## Güvenlik
+
+Şifre bir ortam değişkeninde durur ve yalnız modeme gönderilir. Okuma araçları hiçbir şeyi değiştirmez.
+`reboot_router` da `confirm=true` verilmeden çalışmaz; sunucu asistana önce sana sormasını söyler. Güvenlik açığı
+bildirmek için [SECURITY.md](SECURITY.md) dosyasına bak.
+
+## Katkı
+
+[CONTRIBUTING.md](CONTRIBUTING.md) dosyasında.
+
+## Teşekkür
+
+- Alex Erohin'in [tplinkrouterc6u](https://github.com/AlexandrErohin/TP-Link-Archer-C6U) kütüphanesi (GPL-3.0):
+  modemle konuşma işinin çoğunu o yapıyor; eski tip istemci onun MR200 istemcisinin üstüne yazıldı.
+- [MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk) (MIT).
+- Marka kitindeki yazı tipi: [Geist](https://vercel.com/font) (SIL OFL 1.1).
+
+## Lisans
+
+[GPL-3.0-or-later](LICENSE). Sunucu, GPL-3.0 lisanslı tplinkrouterc6u'yu genişlettiği için bu lisansı taşıyor.

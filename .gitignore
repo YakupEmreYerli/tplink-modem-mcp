@@ -2,3 +2,6 @@
 __pycache__/
 *.pyc
 graphify-out/
+dist/
+.pytest_cache/
+assets/brand/*.svg

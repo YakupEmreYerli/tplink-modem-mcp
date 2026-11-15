@@ -3,8 +3,16 @@ name = "tplink-modem-mcp"
 version = "0.1.0"
 description = "MCP server for TP-Link routers and ISP modems: devices, Wi-Fi signal, logs, presence history"
 readme = "README.md"
-license = "MIT"
-keywords = ["mcp", "tp-link", "router", "modem", "archer"]
+license = "GPL-3.0-or-later"
+keywords = ["mcp", "mcp-server", "tp-link", "router", "modem", "archer", "wifi", "home-network"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Networking :: Monitoring",
+]
 authors = [
     { name = "Yakup Emre Yerli" }
 ]
@@ -14,9 +22,19 @@ dependencies = [
     "tplinkrouterc6u>=5.40.0",
 ]
 
+[project.urls]
+Homepage = "https://github.com/YakupEmreYerli/tplink-modem-mcp"
+Issues = "https://github.com/YakupEmreYerli/tplink-modem-mcp/issues"
+
 [project.scripts]
 tplink-modem-mcp = "tplink_modem_mcp.server:main"
 
 [build-system]
 requires = ["uv_build>=0.13.8,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "anyio>=4.16.0",
+    "pytest>=9.2.0",
+]

@@ -1,0 +1,40 @@
+name: Model report
+description: Tell us whether tplink-modem-mcp works on your router or modem
+title: "Model report: "
+labels: ["model report"]
+body:
+  - type: input
+    id: model
+    attributes:
+      label: Model and hardware version
+      description: From the label under the device or the web UI, e.g. "Archer C5v v1"
+    validations:
+      required: true
+  - type: input
+    id: firmware
+    attributes:
+      label: Firmware version and ISP
+      description: e.g. "1.8.0, Türk Telekom", or "stock firmware"
+    validations:
+      required: true
+  - type: dropdown
+    id: result
+    attributes:
+      label: Does it work?
+      options:
+        - Everything I tried works
+        - Login works, some tools fail
+        - Login fails
+    validations:
+      required: true
+  - type: input
+    id: client
+    attributes:
+      label: Client
+      description: Shown in router_status as "client_class", or the TPLINK_CLIENT you set
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: Which tools fail, and the error. Output of `TPLINK_LOG=DEBUG tplink-modem-mcp sample` helps. Remove passwords, MAC addresses and your external IP first.
+      render: text
