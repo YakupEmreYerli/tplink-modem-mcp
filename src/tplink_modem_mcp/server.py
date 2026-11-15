@@ -20,7 +20,8 @@ WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=
 
 router = Router()
 history = History()
-SAMPLE_SECONDS = int(os.environ.get("TPLINK_PRESENCE_INTERVAL", "60"))  # 0 = no background sampling
+# 0 = no background sampling, e.g. when `tplink-modem-mcp sample` runs from a timer and fills the same history.
+SAMPLE_SECONDS = int(os.environ.get("TPLINK_PRESENCE_INTERVAL", "60"))
 SEVERITY = ["emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"]
 
 
@@ -91,7 +92,6 @@ async def list_clients(include_inactive: bool = False) -> list[dict]:
     """Devices on the network: hostname, IP, MAC, wired or Wi-Fi band and SSID, signal (dBm, closer to 0 is
     better; below -75 is weak) and link rate where the router reports them."""
     clients = await _run(_clients)
-    history.sample([d for d in clients if d["active"]])
     return [d for d in clients if include_inactive or d["active"]]
 
 
@@ -170,8 +170,20 @@ async def reboot_router(confirm: bool = False) -> str:
     return "Reboot requested; the router is back in about two minutes."
 
 
+def sample_once() -> int:
+    """`tplink-modem-mcp sample`: one presence sample for a timer (cron, systemd); prints the new events."""
+    import json
+    events = history.sample([d for d in router.call(_clients) if d["active"]])
+    for e in events:
+        print(json.dumps(e, ensure_ascii=False))
+    return 0
+
+
 def main():
+    import sys
     logging.basicConfig(level=os.environ.get("TPLINK_LOG", "WARNING"))
+    if sys.argv[1:] == ["sample"]:
+        raise SystemExit(sample_once())
     mcp.run()
 
 

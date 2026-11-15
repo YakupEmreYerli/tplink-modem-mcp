@@ -45,12 +45,19 @@ Any other MCP client: run `uv --directory /path/to/tplink-modem-mcp run tplink-m
 | `TPLINK_HOST` | `http://192.168.1.1` | router address |
 | `TPLINK_USERNAME` | `admin` | |
 | `TPLINK_CLIENT` | auto | `legacy`, or a tplinkrouterc6u class name such as `TPLinkMRClient` |
-| `TPLINK_PRESENCE_INTERVAL` | `60` | seconds between presence samples for `client_history`; `0` turns it off |
+| `TPLINK_PRESENCE_INTERVAL` | `60` | seconds between presence samples while the server runs; `0` turns it off |
+| `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem-mcp` | where the presence history is kept |
 
 TP-Link routers allow one admin session at a time. The server reuses its session for two minutes, so the web UI
 may ask you to take over the session while the server is in use.
 
-Presence history is kept in `$XDG_STATE_HOME/tplink-modem-mcp/presence.jsonl` (default `~/.local/state/…`).
+Presence history is kept in `presence.jsonl` in the state folder. The server only samples while it runs; to keep
+a history around the clock, run `tplink-modem-mcp sample` every minute from a timer (cron, a systemd timer) on a
+machine that stays on, and start the MCP server with `TPLINK_PRESENCE_INTERVAL=0` so only the timer writes:
+
+```sh
+* * * * * TPLINK_PASSWORD=... uv --directory /path/to/tplink-modem-mcp run tplink-modem-mcp sample
+```
 
 ## Tested on
 
