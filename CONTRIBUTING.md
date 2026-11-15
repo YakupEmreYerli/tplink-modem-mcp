@@ -23,8 +23,8 @@ login and parsing work on your model.
 
 - `uv run pytest -q` passes.
 - New settings are read from `TPLINK_*` environment variables and listed in both READMEs.
-- A tool that changes the router takes `confirm: bool = False`, does nothing without it, and uses the `WRITE`
-  annotations.
+- A tool that changes the router is registered with `@write_tool`, calls `control.check_allowed` with the object it
+  touches, returns `_preview(...)` without `confirm=true`, and asks `_approved(ctx, ...)` before applying.
 
 ## Adding a router model
 

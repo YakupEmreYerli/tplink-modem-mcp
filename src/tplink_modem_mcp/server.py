@@ -4,13 +4,18 @@ Works with every model tplinkrouterc6u supports, plus older ISP firmwares it doe
 relatives; see legacy.py). Read tools are free to call. Tools that change the router need confirm=true.
 """
 import asyncio
+import functools
 import logging
 import os
+import re
 from contextlib import asynccontextmanager
 
-from mcp.server.mcpserver import MCPServer
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
+from pydantic import BaseModel, Field
 
+from . import control
 from .history import History
 from .router import Router, plain
 
@@ -64,7 +69,10 @@ async def lifespan(_server):
 mcp = MCPServer(
     "tplink-modem",
     instructions="Reads and manages a TP-Link router or ISP modem on the local network. Read tools are safe. "
-                 "Tools that change settings or reboot need confirm=true; ask the user before setting it. "
+                 "Every tool that changes the router first returns a preview; show it to the user, and only call "
+                 "it again with confirm=true once they approve. "
+                 "For anything without a dedicated tool, find the setting with router_objects and router_read "
+                 "(the same objects the router's web UI uses) and change it with router_change. "
                  "For 'device X keeps dropping' questions combine list_clients (signal), client_history and "
                  "router_logs (DHCP DISCOVER lines show a device joining again).",
     lifespan=lifespan,
@@ -161,11 +169,183 @@ async def ipv6_status() -> dict:
     return plain(await _run(lambda c: c.get_ipv6_status()))
 
 
-@mcp.tool(annotations=WRITE)
-async def reboot_router(confirm: bool = False) -> str:
+# ----- changes: preview first, then confirm=true (and the client's own approval prompt, if it has one) -----
+
+class _Approval(BaseModel):
+    approve: bool = Field(description="Apply this change to the router")
+
+
+async def _approved(ctx: Context | None, summary: str) -> bool:
+    """With confirm=true: ask the user directly when the client supports it, otherwise trust the assistant's ask."""
+    try:
+        caps = ctx.request_context.session.client_capabilities if ctx else None
+    except Exception:
+        caps = None
+    if not caps or getattr(caps, "elicitation", None) is None:
+        return True
+    res = await ctx.elicit(f"Change the router: {summary}", _Approval)
+    return res.action == "accept" and res.data.approve
+
+
+def _preview(summary: str, **details) -> dict:
+    return {"status": "not applied", "would_do": summary, **details,
+            "next": "Show this to the user. If they approve, call again with confirm=true."}
+
+
+def _explain(fn):
+    """Policy refusals, bad arguments and router refusals reach the assistant as readable errors."""
+    @functools.wraps(fn)
+    async def wrapper(*args, **kwargs):
+        try:
+            return await fn(*args, **kwargs)
+        except (PermissionError, ValueError, NotImplementedError, RuntimeError) as e:
+            raise ToolError(str(e)) from e
+    return wrapper
+
+
+def write_tool(fn):
+    """Change tools are only offered when TPLINK_WRITE is not off."""
+    return mcp.tool(annotations=WRITE)(_explain(fn)) if control.writes_enabled() else fn
+
+
+@mcp.tool(annotations=READ)
+@_explain
+async def router_objects(contains: str = "") -> dict:
+    """Names of every settings object the router's web UI uses (LAN_WLAN, LAN_DHCP_STATIC_ADDR,
+    WAN_IP_CONN_PORTMAPPING, FIREWALL, ...) and the operations it can run (ACT_REBOOT, ...). Filter with contains."""
+    def read(c):
+        dm = control.DataModel(c)
+        return {"objects": dm.objects(), "operations": dm.operations()}
+    out = await _run(read)
+    q = contains.upper()
+    return {k: [n for n in v if q in n] for k, v in out.items()}
+
+
+@mcp.tool(annotations=READ)
+@_explain
+async def router_read(object: str, stack: str = "", attributes: list[str] | None = None) -> list[dict]:
+    """Read a settings object: every instance, or the one at stack (e.g. "1,2"). Each row carries its _stack, which
+    router_change needs. Passwords and keys are masked unless TPLINK_SHOW_SECRETS=1."""
+    return await _run(lambda c: control.DataModel(c).read(object, stack, attributes))
+
+
+@write_tool
+async def router_change(action: str, object: str, stack: str = "", parent_stack: str = "",
+                        attributes: dict[str, str] | None = None, confirm: bool = False,
+                        ctx: Context | None = None) -> dict:
+    """Change any setting the web UI can change. action: "set" (stack = the row's _stack; omit for single objects),
+    "add" (parent_stack = the parent row's _stack, e.g. "1" for LAN_DHCP_STATIC_ADDR under LAN 1) or "delete".
+    Read the object first so attribute names match. Without confirm=true it only shows what it would do."""
+    control.check_allowed(object.strip().upper())
+    summary = f"{action} {object.upper()}" + (f" at {stack}" if stack else "") + (f" with {attributes}" if attributes else "")
+    if not confirm:
+        current = await _run(lambda c: control.DataModel(c).read(object, stack)) if stack and action != "add" else None
+        return _preview(summary, current=current)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: control.DataModel(c).change(action, object, stack, parent_stack, attributes))
+
+
+@write_tool
+async def router_run(operation: str, confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Run a router operation from router_objects' list, such as ACT_DHCP_RENEW or ACT_PPP_DISCONN.
+    Without confirm=true it only shows what it would do."""
+    op = operation.strip().upper()
+    control.check_allowed(op if op.startswith("ACT_") else "ACT_" + op)
+    if not confirm:
+        return _preview(f"run {op}")
+    if not await _approved(ctx, f"run {op}"):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: control.DataModel(c).run(op))
+
+
+def _norm_mac(mac: str) -> str:
+    m = mac.strip().upper().replace("-", ":")
+    if not re.fullmatch(r"([0-9A-F]{2}:){5}[0-9A-F]{2}", m):
+        raise ValueError(f"not a MAC address: {mac!r}")
+    return m
+
+
+@write_tool
+async def set_static_ip(mac: str, ip: str, confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Give a device a fixed IP (address reservation): adds it, or updates the existing reservation for that MAC.
+    The device gets the address the next time it renews its lease. Without confirm=true it only shows the plan."""
+    mac = _norm_mac(mac)
+    control.check_allowed("LAN_DHCP_STATIC_ADDR")
+
+    def plan(c):
+        rows = control.DataModel(c).read("LAN_DHCP_STATIC_ADDR")
+        same = next((r for r in rows if r.get("chaddr", "").upper() == mac), None)
+        taken = next((r for r in rows if r.get("yiaddr") == ip and r.get("chaddr", "").upper() != mac), None)
+        return same, taken
+    same, taken = await _run(plan)
+    if taken:
+        return {"status": "not applied", "reason": f"{ip} is already reserved for {taken.get('chaddr')}"}
+    summary = (f"change {mac} reservation from {same['yiaddr']} to {ip}" if same else f"reserve {ip} for {mac}")
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    attrs = {"chaddr": mac, "yiaddr": ip, "enable": "1"}
+    if same:
+        return await _run(lambda c: control.DataModel(c).change("set", "LAN_DHCP_STATIC_ADDR", same["_stack"], "", attrs))
+    return await _run(lambda c: control.DataModel(c).change("add", "LAN_DHCP_STATIC_ADDR", "", "1", attrs))
+
+
+@write_tool
+async def remove_static_ip(mac: str, confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Remove a device's fixed IP reservation. Without confirm=true it only shows the plan."""
+    mac = _norm_mac(mac)
+    control.check_allowed("LAN_DHCP_STATIC_ADDR")
+    rows = await _run(lambda c: control.DataModel(c).read("LAN_DHCP_STATIC_ADDR"))
+    row = next((r for r in rows if r.get("chaddr", "").upper() == mac), None)
+    if not row:
+        return {"status": "not applied", "reason": f"no reservation for {mac}"}
+    summary = f"remove reservation {row.get('yiaddr')} for {mac}"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: control.DataModel(c).change("delete", "LAN_DHCP_STATIC_ADDR", row["_stack"]))
+
+
+@write_tool
+async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabled: bool | None = None,
+                   hidden: bool | None = None, confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Change a Wi-Fi network (index from wifi_networks): name, password, on/off, hidden. Devices on it drop and
+    must reconnect, with the new password if it changed. Without confirm=true it only shows the plan."""
+    control.check_allowed("LAN_WLAN")
+    attrs: dict[str, str] = {}
+    if ssid:
+        attrs["SSID"] = ssid
+    if password:
+        if not 8 <= len(password) <= 63:
+            raise ValueError("a WPA password is 8 to 63 characters")
+        attrs["X_TP_PreSharedKey"] = password
+    if enabled is not None:
+        attrs["Enable"] = "1" if enabled else "0"
+    if hidden is not None:
+        attrs["SSIDAdvertisementEnabled"] = "0" if hidden else "1"
+    if not attrs:
+        raise ValueError("nothing to change")
+    stack = f"1,{network_index}"
+    shown = {k: ("***" if k == "X_TP_PreSharedKey" else v) for k, v in attrs.items()}
+    summary = f"Wi-Fi network {network_index}: {shown}"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: control.DataModel(c).change("set", "LAN_WLAN", stack, "", attrs))
+
+
+@write_tool
+async def reboot_router(confirm: bool = False, ctx: Context | None = None) -> str:
     """Reboot the router. The whole network and the internet drop for a minute or two. Needs confirm=true."""
+    control.check_allowed("ACT_REBOOT")
     if not confirm:
         return "Not rebooted. Call again with confirm=true to reboot."
+    if not await _approved(ctx, "reboot (network and internet drop for a minute or two)"):
+        return "Not rebooted: the user did not approve it."
     await _run(lambda c: c.reboot())
     return "Reboot requested; the router is back in about two minutes."
 

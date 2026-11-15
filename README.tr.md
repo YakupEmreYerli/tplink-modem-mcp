@@ -1,9 +1,9 @@
 # tplink-modem-mcp
 
-Yapay zekâ asistanının evdeki TP-Link modemi ya da internet sağlayıcısının verdiği TP-Link modemi okuyup
-yönetmesini sağlayan bir [MCP](https://modelcontextprotocol.io) sunucusu. Ağa kimin bağlı olduğunu, Wi-Fi
-sinyalinin ne kadar güçlü olduğunu, modemin neler kaydettiğini ve hangi cihazın ne zaman ağdan düşüp geri
-geldiğini asistana sorabilirsin.
+Evdeki TP-Link modemi ya da internet sağlayıcısının verdiği TP-Link modemi yapay zekâ asistanına yönettiren bir
+[MCP](https://modelcontextprotocol.io) sunucusu. Modemin arayüzünü açmana gerek kalmaz: kimin bağlı olduğunu ve
+sinyalini görür, bir cihaza sabit IP verir, Wi-Fi'ı değiştirir, kayıtları okur; arayüzde yapılabilen her şeyi
+yapar. Her değişikliği önce sana gösterir, sen onaylamadan uygulamaz.
 
 [![CI](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
@@ -24,6 +24,8 @@ Asistana şunları sorabilirsin:
 - "Şu an Wi-Fi'da hangi cihazlar var, en zayıf sinyal hangisinde?"
 - "Televizyon sürekli kopuyor. Bugün ne zaman düştü, ne zaman geri geldi?"
 - "Son bir saatteki DHCP hatalarını göster."
+- "Yazıcıya 192.168.1.50 sabit IP'sini ver."
+- "Misafir Wi-Fi'ı kapat." / "25565 portunu bilgisayarıma yönlendir."
 
 ## Araç listesi
 
@@ -37,9 +39,24 @@ Asistana şunları sorabilirsin:
 | `router_logs` | Sistem kaydı; modüle, metne ya da önem derecesine göre süzülür |
 | `dhcp_leases`, `dhcp_reservations` | DHCP kiraları ve sabit adresler |
 | `ipv6_status` | WAN ve LAN IPv6 durumu |
-| `reboot_router` | Modemi yeniden başlatır, yalnız `confirm=true` ile |
+| `router_objects` | Modem arayüzünün kullandığı bütün ayar nesneleri (Wi-Fi, DHCP, port yönlendirme, güvenlik duvarı, ebeveyn denetimi, DNS, QoS, saat...) ve çalıştırabileceği işlemler |
+| `router_read` | Bu nesnelerden herhangi birini okur |
+| `set_static_ip`, `remove_static_ip` | Bir cihaza sabit IP verir ya da kaldırır |
+| `set_wifi` | Bir Wi-Fi ağının adını, şifresini, açık/kapalı ve gizli ayarını değiştirir |
+| `router_change` | Arayüzde değiştirilebilen her şeyi değiştirir, ekler ya da siler (`set` / `add` / `delete`) |
+| `router_run` | DHCP yenileme ya da PPPoE'yi yeniden bağlama gibi bir modem işlemi çalıştırır |
+| `reboot_router` | Modemi yeniden başlatır |
 
-`reboot_router` dışındaki araçların hepsi yalnız okur.
+### Değişiklikler nasıl onaylanır
+
+Modemi değiştiren bir araç ilk çağrıda hiçbir şey yapmaz, ne yapacağını döndürür. Asistan bunu sana gösterir,
+ancak sen evet dersen `confirm=true` ile yeniden çağırır. MCP istemcin sana kendisi soru sorabiliyorsa (MCP
+elicitation), sunucu uygulamadan önce ayrıca doğrudan sana da sorar. Sunucunun döndürdüğü her şeyde şifreler ve
+anahtarlar gizlenir.
+
+`router_objects`, `router_read`, `router_change` ve `router_run`, TP-Link'in CGI yazılımlı modemlerinde çalışır:
+eski sağlayıcı modemleri ve MR / VR aileleri. Öteki modellerde tplinkrouterc6u'nun desteklediği hazır araçlar
+yine çalışır.
 
 ## Kurulum
 
@@ -80,6 +97,14 @@ PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tpl
 | `TPLINK_PRESENCE_INTERVAL` | `60` | sunucu açıkken cihaz listesine kaç saniyede bir bakılacağı; `0` kapatır |
 | `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem-mcp` | cihaz geçmişinin tutulduğu klasör |
 | `TPLINK_LOG` | `WARNING` | kayıt düzeyi; `DEBUG` modeme giden her isteği gösterir |
+| `TPLINK_WRITE` | `on` | `off` sunucuyu yalnız okur hâle getirir, değiştiren araçlar hiç görünmez |
+| `TPLINK_ALLOW` | (hepsi) | değiştirilebilecek nesne ya da işlemler, virgülle; `*` sonunu tutar, örneğin `LAN_DHCP*,LAN_WLAN` |
+| `TPLINK_DENY` | (yok) | hiçbir zaman değiştirilemeyecek nesne ya da işlemler, örneğin `ACT_FACTORY_RESET,USER_CFG` |
+| `TPLINK_SHOW_SECRETS` | `0` | `1` okumalarda Wi-Fi şifrelerini ve anahtarları `***` yerine gösterir |
+
+Varsayılan olarak hiçbir şey kısıtlı değil: asistan arayüzde değiştirilebilen her şeyi değiştirebilir, her
+seferinde senin onayınla. İstersen daraltırsın; örneğin yalnız sabit IP ve Wi-Fi için
+`TPLINK_ALLOW=LAN_DHCP_STATIC_ADDR,LAN_WLAN`.
 
 TP-Link modemler aynı anda tek yönetici oturumuna izin verir. Sunucu bütün istekleri tek bir oturumdan geçirir,
 eski tip istemci de girişini iki dakika açık tutar. Bu yüzden sunucu kullanılırken modemin arayüzü oturumu
@@ -109,7 +134,9 @@ tplinkrouterc6u'nun desteklediği modellerin onun üzerinden çalışması gerek
 ## Güvenlik
 
 Şifre bir ortam değişkeninde durur ve yalnız modeme gönderilir. Okuma araçları hiçbir şeyi değiştirmez.
-`reboot_router` da `confirm=true` verilmeden çalışmaz; sunucu asistana önce sana sormasını söyler. Güvenlik açığı
+Değiştiren araçlar `confirm=true` ile yeniden çağrılana kadar yalnız ne yapacaklarını gösterir; sunucu asistana
+bunu ancak sen onaylayınca yapmasını söyler, elicitation destekleyen istemciler de sana doğrudan sorar.
+`TPLINK_WRITE`, `TPLINK_ALLOW` ve `TPLINK_DENY` neyin değiştirilebileceğini baştan sınırlar. Güvenlik açığı
 bildirmek için [SECURITY.md](SECURITY.md) dosyasına bak.
 
 ## Katkı

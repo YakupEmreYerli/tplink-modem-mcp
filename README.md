@@ -1,8 +1,9 @@
 # tplink-modem-mcp
 
-An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant read and manage a TP-Link router or an
-ISP-supplied TP-Link modem on your local network: who is connected, how strong their Wi-Fi signal is, what the
-router logged, and when each device joined or dropped off.
+An [MCP](https://modelcontextprotocol.io) server that lets an AI assistant run a TP-Link router or an ISP-supplied
+TP-Link modem on your local network, so you never have to open its web panel: see who is connected and how strong
+their Wi-Fi signal is, give a device a fixed IP, change the Wi-Fi, read the logs, and change anything else the web
+panel can. Every change is shown to you first and only applied once you approve it.
 
 [![CI](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml)
 [![PyPI](https://img.shields.io/pypi/v/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
@@ -22,6 +23,8 @@ Ask things like:
 - "Which devices are on the Wi-Fi right now, and which one has the weakest signal?"
 - "The TV keeps dropping off. When did it leave and come back today?"
 - "Show me the router's DHCP errors from the last hour."
+- "Give the printer a fixed IP, 192.168.1.50."
+- "Turn the guest Wi-Fi off." / "Forward port 25565 to my PC."
 
 ## Tools
 
@@ -35,9 +38,23 @@ Ask things like:
 | `router_logs` | System log, filtered by module, text or severity |
 | `dhcp_leases`, `dhcp_reservations` | DHCP leases and fixed addresses |
 | `ipv6_status` | WAN / LAN IPv6 |
-| `reboot_router` | Reboots, only with `confirm=true` |
+| `router_objects` | Every settings object the web panel uses (Wi-Fi, DHCP, port forwarding, firewall, parental control, DNS, QoS, time, ...) and the operations it can run |
+| `router_read` | Read any of those objects |
+| `set_static_ip`, `remove_static_ip` | Give a device a fixed IP, or take it away |
+| `set_wifi` | Change a Wi-Fi network's name, password, on/off, hidden |
+| `router_change` | Change, add or delete anything else the web panel can (`set` / `add` / `delete`) |
+| `router_run` | Run a router operation such as renewing DHCP or reconnecting PPPoE |
+| `reboot_router` | Reboot |
 
-Everything except `reboot_router` only reads.
+### How changes are approved
+
+A tool that changes the router never does it on the first call. It returns what it would do; the assistant shows
+that to you, and only calls again with `confirm=true` once you say yes. If your MCP client can ask you itself
+(MCP elicitation), the server also asks you directly before applying. Passwords and keys are masked in everything
+the server returns.
+
+`router_objects`, `router_read`, `router_change` and `router_run` work on TP-Link's CGI firmwares: the older ISP
+modems and the MR / VR families. On other models the curated tools that tplinkrouterc6u supports still work.
 
 ## Install
 
@@ -78,6 +95,13 @@ From a clone instead of PyPI: `uv --directory /path/to/tplink-modem-mcp run tpli
 | `TPLINK_PRESENCE_INTERVAL` | `60` | seconds between presence samples while the server runs; `0` turns it off |
 | `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem-mcp` | where the presence history is kept |
 | `TPLINK_LOG` | `WARNING` | log level, `DEBUG` shows every router call |
+| `TPLINK_WRITE` | `on` | `off` makes the server read-only: change tools are not offered at all |
+| `TPLINK_ALLOW` | (all) | comma-separated objects or operations that may be changed, `*` matches a suffix, e.g. `LAN_DHCP*,LAN_WLAN` |
+| `TPLINK_DENY` | (none) | objects or operations that may never be changed, e.g. `ACT_FACTORY_RESET,USER_CFG` |
+| `TPLINK_SHOW_SECRETS` | `0` | `1` shows Wi-Fi passwords and keys in reads instead of `***` |
+
+Nothing is narrowed by default: the assistant can change whatever the web panel can, always with your approval.
+Narrow it when you want to, for example `TPLINK_ALLOW=LAN_DHCP_STATIC_ADDR,LAN_WLAN` for fixed IPs and Wi-Fi only.
 
 TP-Link routers allow one admin session at a time. Calls go through a single shared session, and the legacy
 client keeps its login for two minutes, so the web UI may ask you to take over the session while the server is in
@@ -105,9 +129,10 @@ whether it works or not.
 
 ## Security
 
-The password stays in an environment variable and is only sent to the router. Read tools never change anything;
-`reboot_router` does nothing unless it is called with `confirm=true`, and the server's instructions tell the
-assistant to ask you first. To report a vulnerability, see [SECURITY.md](SECURITY.md).
+The password stays in an environment variable and is only sent to the router. Read tools never change anything.
+Change tools only preview until they are called again with `confirm=true`, which the server tells the assistant
+to do only after you approve; clients with elicitation also ask you directly. `TPLINK_WRITE`, `TPLINK_ALLOW` and
+`TPLINK_DENY` limit what can be changed at all. To report a vulnerability, see [SECURITY.md](SECURITY.md).
 
 ## Contributing
 
