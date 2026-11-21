@@ -7,8 +7,11 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 READ_TOOLS = {"router_status", "list_clients", "find_client", "client_history", "wifi_networks", "router_logs",
-              "dhcp_leases", "dhcp_reservations", "ipv6_status", "router_objects", "router_read"}
-WRITE_TOOLS = {"router_change", "router_run", "set_static_ip", "remove_static_ip", "set_wifi", "reboot_router"}
+              "dhcp_leases", "dhcp_reservations", "ipv6_status", "router_objects", "router_read",
+              "diagnostic_status", "mesh_pairing_status", "mesh_scan_status"}
+WRITE_TOOLS = {"router_change", "router_run", "set_static_ip", "remove_static_ip", "set_wifi", "reboot_router",
+               "router_apply", "start_diagnostic", "start_mesh_pairing", "manage_mesh_scan",
+               "export_router_file", "import_router_file"}
 
 
 def params(tmp_path, **extra):

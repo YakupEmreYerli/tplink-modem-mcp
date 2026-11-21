@@ -14,6 +14,8 @@ from Crypto.PublicKey import RSA
 from tplinkrouterc6u.client.mr200 import TPLinkMR200Client
 from tplinkrouterc6u.common.exception import AuthorizeError, ClientException
 
+from .logs import parse_entries
+
 LOGIN_ERRORS = {71233: "wrong username or password", 71234: "bad login request"}
 
 
@@ -130,14 +132,8 @@ class LegacyCgiClient(TPLinkMR200Client):
 
     def logs(self) -> list[dict]:
         """System log, newest first: time, severity (0 emerg .. 7 debug), module, message."""
-        lines = self.req.get(f"{self.host}/cgi/log", timeout=self.timeout).text.split("\r\n")
-        out = []
-        for line in lines[1:]:
-            m = re.match(r"([\d-]+\s[\d:]+)\s\[(\d)\]\s(\w+):\s(.*)", line)
-            if m:
-                out.append({"time": m.group(1), "severity": int(m.group(2)), "module": m.group(3).upper(),
-                            "message": m.group(4)})
-        return out[::-1]
+        lines = self.req.get(f"{self.host}/cgi/log", timeout=self.timeout).text.splitlines()
+        return parse_entries(lines[1:])
 
     def internet(self) -> dict:
         """Enabled WAN connections (PPP and IP) and the LAN address; the generic IPv4 read picks the ISP's

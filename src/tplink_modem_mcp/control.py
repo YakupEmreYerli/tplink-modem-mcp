@@ -15,8 +15,12 @@ import fnmatch
 import os
 import re
 
+from tplinkrouterc6u.client.ex import TPLinkEXClient
+
+from . import ex
+
 ACTIONS = {"set": "SET", "add": "ADD", "delete": "DEL"}
-SECRET = re.compile(r"(?i)(key|pass|psk|pwd|secret|pin)(?!.*(enable|index|interval|failures|size))")
+SECRET = re.compile(r"(?i)(key|pass|psk|pwd|secret|pin|token|credential|community)(?!.*(enable|index|interval|failures|size))")
 ZERO = "0,0,0,0,0,0"
 
 
@@ -39,10 +43,18 @@ def check_allowed(name: str) -> None:
         raise PermissionError(f"{name} is not in TPLINK_ALLOW")
 
 
-def mask(row: dict) -> dict:
-    if os.environ.get("TPLINK_SHOW_SECRETS") == "1":
+def mask(row: dict, *, always: bool = False) -> dict:
+    if not always and os.environ.get("TPLINK_SHOW_SECRETS") == "1":
         return row
-    return {k: ("***" if v and SECRET.search(k) else v) for k, v in row.items()}
+    return _mask_values(row)
+
+
+def _mask_values(value):
+    if isinstance(value, dict):
+        return {k: ("***" if v and SECRET.search(k) else _mask_values(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_mask_values(item) for item in value]
+    return value
 
 
 def _stack(s: str | None) -> str:
@@ -66,14 +78,21 @@ class DataModel:
 
     def objects(self) -> list[str]:
         """Object names the firmware knows, from the web UI's own /js/oid_str.js (feature flags and page ids left out)."""
-        text = self.c.req.get(f"{self.c.host}/js/oid_str.js", timeout=self.c.timeout).text
+        text = self._script("oid_str.js")
         names = set(re.findall(r"\b([A-Z][A-Z0-9_]{2,})\s*[:=]", text))
         return sorted(n for n in names if not n.startswith(("INCLUDE_", "INLCUDE_", "PAGE_", "SUPPORT_")))
 
     def operations(self) -> list[str]:
         """Operation names for run(), from the web UI's lib.js (ACT_REBOOT, ACT_DHCP_RENEW, ...)."""
-        text = self.c.req.get(f"{self.c.host}/js/lib.js", timeout=self.c.timeout).text
+        script = "proxy.js" if isinstance(self.c, TPLinkEXClient) else "lib.js"
+        text = self._script(script)
         return sorted(set(re.findall(r'var ACT_OP_\w+\s*=\s*"(ACT_\w+)"', text)))
+
+    def _script(self, name: str) -> str:
+        response = self.c.req.get(f"{self.c.host}/js/{name}", timeout=self.c.timeout,
+                                  headers={"Referer": self.c.host + "/"})
+        response.raise_for_status()
+        return response.text
 
     def _act(self, kind: str, oid: str, stack: str = ZERO, pstack: str = ZERO, attrs: list[str] | None = None):
         item = self.c.ActItem(getattr(self.c.ActItem, kind), oid, stack, pstack, attrs or [])
@@ -103,6 +122,8 @@ class DataModel:
     def read(self, oid: str, stack: str = "", attributes: list[str] | None = None) -> list[dict]:
         """Every instance of oid, or the one at stack; attributes limits the fields."""
         oid = oid.strip().upper()
+        if isinstance(self.c, TPLinkEXClient):
+            return [mask(row) for row in ex.read(self.c, oid, _stack(stack) if stack else "", attributes)]
         if stack:
             rows = self._parse(self._act("GET", oid, _stack(stack), ZERO, attributes))
             for r in rows:
@@ -121,16 +142,21 @@ class DataModel:
         if not kind:
             raise ValueError(f"action must be one of {sorted(ACTIONS)}")
         check_allowed(oid)
-        attrs = [f"{k}={v}" for k, v in (attributes or {}).items()]
-        if kind in ("SET", "DEL") and not stack:
-            stack = ZERO  # singleton objects live at 0,0,0,0,0,0
-        self._act(kind, oid, _stack(stack), _stack(parent_stack), attrs)
-        return {"done": action, "object": oid, "stack": _stack(stack)}
+        address, parent = _stack(stack), _stack(parent_stack)
+        attrs = attributes or {}
+        if isinstance(self.c, TPLinkEXClient):
+            ex.change(self.c, kind, oid, address, parent, attrs)
+        else:
+            self._act(kind, oid, address, parent, [f"{k}={v}" for k, v in attrs.items()])
+        return {"done": action, "object": oid, "stack": address}
 
     def run(self, operation: str) -> dict:
         operation = operation.strip().upper()
         if not operation.startswith("ACT_"):
             operation = "ACT_" + operation
         check_allowed(operation)
-        self._act("OP", operation)
+        if isinstance(self.c, TPLinkEXClient):
+            ex.change(self.c, "OP", operation, ZERO, ZERO, {})
+        else:
+            self._act("OP", operation)
         return {"done": "run", "operation": operation}

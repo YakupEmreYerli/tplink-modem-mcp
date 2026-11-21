@@ -1,7 +1,7 @@
 """One shared, serialised connection to the router.
 
-TP-Link firmwares allow a single admin session at a time, so every call goes through one lock and one client,
-and a failed call logs in again once before giving up.
+TP-Link firmwares allow a single admin session at a time, so every call goes through one lock and one client.
+Authentication and reads can retry after a session failure.
 """
 import logging
 import os
@@ -48,19 +48,21 @@ class Router:
             return LegacyCgiClient(c.host, c.password, c.username, timeout=c.timeout)
         return TplinkRouterProvider.get_client(c.host, c.password, c.username, timeout=c.timeout)
 
-    def call(self, fn):
-        """Run fn(client) logged in; on failure drop the session, log in again and retry once."""
+    def call(self, fn, *, retry: bool = True):
+        """Run fn(client) logged in. Retry authentication and eligible reads once."""
         with self._lock:
             for attempt in (1, 2):
+                dispatched = False
                 try:
                     if self._client is None:
                         self._client = self._make_client()
                     self._client.authorize()
+                    dispatched = True
                     return fn(self._client)
                 except Exception:
                     log.debug("router call failed (attempt %d)", attempt, exc_info=True)
                     self._client = None
-                    if attempt == 2:
+                    if attempt == 2 or (dispatched and not retry):
                         raise
 
     @property

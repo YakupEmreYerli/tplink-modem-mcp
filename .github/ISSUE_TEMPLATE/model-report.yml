@@ -1,5 +1,5 @@
 name: Model report
-description: Tell us whether tplink-modem-mcp works on your router or modem
+description: Tell us how tplink-hb810-mcp works on your firmware
 title: "Model report: "
 labels: ["model report"]
 body:
@@ -36,5 +36,5 @@ body:
     id: details
     attributes:
       label: Details
-      description: Which tools fail, and the error. Output of `TPLINK_LOG=DEBUG tplink-modem-mcp sample` helps. Remove passwords, MAC addresses and your external IP first.
+      description: Which tools fail, and the error. Output of `TPLINK_LOG=DEBUG tplink-hb810-mcp sample` helps. Remove passwords, MAC addresses and your external IP first.
       render: text

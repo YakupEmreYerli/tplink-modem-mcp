@@ -5,17 +5,22 @@ relatives; see legacy.py). Read tools are free to call. Tools that change the ro
 """
 import asyncio
 import functools
+from hashlib import sha256
+from ipaddress import ip_address
 import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Literal
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 from pydantic import BaseModel, Field
+from tplinkrouterc6u.client.ex import TPLinkEXClient
 
-from . import control
+from . import control, ex, workflows
 from .history import History
 from .router import Router, plain
 
@@ -25,12 +30,12 @@ WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=
 
 router = Router()
 history = History()
-# 0 = no background sampling, e.g. when `tplink-modem-mcp sample` runs from a timer and fills the same history.
+# 0 = no background sampling, e.g. when `tplink-hb810-mcp sample` runs from a timer and fills the same history.
 SAMPLE_SECONDS = int(os.environ.get("TPLINK_PRESENCE_INTERVAL", "60"))
 SEVERITY = ["emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"]
 
 
-def _clients(c) -> list[dict]:
+def _clients(c, *, diagnostics: bool = False) -> list[dict]:
     """One shape for every client class: hostname, ip, mac, active, connection, ssid, signal_dbm, rate_mbps."""
     if hasattr(c, "hosts"):
         return c.hosts()
@@ -39,11 +44,21 @@ def _clients(c) -> list[dict]:
         out.append({"hostname": d.get("hostname", ""), "ip": d.get("ipaddr", ""), "mac": d.get("macaddr", ""),
                     "active": d.get("active", True), "connection": d.get("type", ""), "ssid": d.get("ssid"),
                     "signal_dbm": d.get("signal"), "rate_mbps": d.get("tx_rate")})
+    if diagnostics and out and isinstance(c, TPLinkEXClient):
+        wifi = ex.client_diagnostics(c)
+        for device in out:
+            device.update(wifi.get(device["mac"].upper().replace("-", ":"), {}))
     return out
 
 
-async def _run(fn):
-    return await asyncio.to_thread(router.call, fn)
+def _wifi_reader(client):
+    if isinstance(client, TPLinkEXClient):
+        return functools.partial(ex.wifi_networks, client)
+    return getattr(client, "wifi_networks", None)
+
+
+async def _run(fn, *, retry: bool = True):
+    return await asyncio.to_thread(router.call, fn, retry=retry)
 
 
 async def _sampler():
@@ -67,7 +82,7 @@ async def lifespan(_server):
 
 
 mcp = MCPServer(
-    "tplink-modem",
+    "tplink-hb810",
     instructions="Reads and manages a TP-Link router or ISP modem on the local network. Read tools are safe. "
                  "Every tool that changes the router first returns a preview; show it to the user, and only call "
                  "it again with confirm=true once they approve. "
@@ -86,8 +101,8 @@ async def router_status() -> dict:
     def read(c):
         out = {"firmware": plain(c.get_firmware()),
                "network": c.internet() if hasattr(c, "internet") else plain(c.get_ipv4_status())}
-        if hasattr(c, "wifi_networks"):
-            out["wifi"] = [n for n in c.wifi_networks() if n["enabled"]]
+        if wifi := _wifi_reader(c):
+            out["wifi"] = [n for n in wifi() if n["enabled"]]
         out["online_devices"] = sum(1 for d in _clients(c) if d["active"])
         return out
     status = await _run(read)
@@ -99,7 +114,7 @@ async def router_status() -> dict:
 async def list_clients(include_inactive: bool = False) -> list[dict]:
     """Devices on the network: hostname, IP, MAC, wired or Wi-Fi band and SSID, signal (dBm, closer to 0 is
     better; below -75 is weak) and link rate where the router reports them."""
-    clients = await _run(_clients)
+    clients = await _run(lambda c: _clients(c, diagnostics=True))
     return [d for d in clients if include_inactive or d["active"]]
 
 
@@ -107,7 +122,7 @@ async def list_clients(include_inactive: bool = False) -> list[dict]:
 async def find_client(query: str) -> list[dict]:
     """Devices whose hostname, IP or MAC contains the query (case-insensitive; '-' and ':' both work in MACs)."""
     q = query.lower().replace("-", ":")
-    return [d for d in await _run(_clients)
+    return [d for d in await _run(lambda c: _clients(c, diagnostics=True))
             if q in (d["hostname"] or "").lower() or q in (d["ip"] or "")
             or q in (d["mac"] or "").lower().replace("-", ":")]
 
@@ -124,9 +139,10 @@ async def client_history(since_hours: float = 24, mac: str = "", limit: int = 20
 async def wifi_networks() -> list[dict]:
     """Every SSID the router has, with band, channel, standard and whether it is on."""
     def read(c):
-        if not hasattr(c, "wifi_networks"):
+        wifi = _wifi_reader(c)
+        if wifi is None:
             raise RuntimeError("this router model does not expose its Wi-Fi network list here")
-        return c.wifi_networks()
+        return wifi()
     return await _run(read)
 
 
@@ -135,6 +151,8 @@ async def router_logs(module: str = "", contains: str = "", max_severity: int = 
     """System log, newest first. module: e.g. DHCPD, PPP, DHCPC, SYSTEM. contains: text or a MAC to look for.
     max_severity: 0 emerg, 3 err, 4 warn, 6 info, 7 debug (everything). Note: the router clears it on reboot."""
     def read(c):
+        if isinstance(c, TPLinkEXClient):
+            return ex.logs(c)
         if not hasattr(c, "logs"):
             raise RuntimeError("this router model does not expose its system log here")
         return c.logs()
@@ -165,8 +183,8 @@ async def dhcp_reservations() -> list[dict]:
 
 @mcp.tool(annotations=READ)
 async def ipv6_status() -> dict:
-    """WAN and LAN IPv6 status, if the model supports it."""
-    return plain(await _run(lambda c: c.get_ipv6_status()))
+    """IPv6 status, including WAN address, gateway and DNS where the firmware provides them."""
+    return await _run(lambda c: ex.ipv6_status(c) if isinstance(c, TPLinkEXClient) else plain(c.get_ipv6_status()))
 
 
 # ----- changes: preview first, then confirm=true (and the client's own approval prompt, if it has one) -----
@@ -211,8 +229,8 @@ def write_tool(fn):
 @mcp.tool(annotations=READ)
 @_explain
 async def router_objects(contains: str = "") -> dict:
-    """Names of every settings object the router's web UI uses (LAN_WLAN, LAN_DHCP_STATIC_ADDR,
-    WAN_IP_CONN_PORTMAPPING, FIREWALL, ...) and the operations it can run (ACT_REBOOT, ...). Filter with contains."""
+    """Names in the router's firmware catalog and any published operation names. Some entries are for other
+    models or modes. Filter with contains (e.g. WIFI, DHCP, FIREWALL)."""
     def read(c):
         dm = control.DataModel(c)
         return {"objects": dm.objects(), "operations": dm.operations()}
@@ -231,19 +249,22 @@ async def router_read(object: str, stack: str = "", attributes: list[str] | None
 
 @write_tool
 async def router_change(action: str, object: str, stack: str = "", parent_stack: str = "",
-                        attributes: dict[str, str] | None = None, confirm: bool = False,
+                        attributes: dict[str, str | int | float | bool] | None = None, confirm: bool = False,
                         ctx: Context | None = None) -> dict:
-    """Change any setting the web UI can change. action: "set" (stack = the row's _stack; omit for single objects),
+    """Change a writable firmware settings object. action: "set" (stack = the row's _stack; omit for single objects),
     "add" (parent_stack = the parent row's _stack, e.g. "1" for LAN_DHCP_STATIC_ADDR under LAN 1) or "delete".
     Read the object first so attribute names match. Without confirm=true it only shows what it would do."""
     control.check_allowed(object.strip().upper())
-    summary = f"{action} {object.upper()}" + (f" at {stack}" if stack else "") + (f" with {attributes}" if attributes else "")
+    shown = control.mask(attributes or {}, always=True)
+    summary = f"{action} {object.upper()}" + (f" at {stack}" if stack else "") + (f" with {shown}" if shown else "")
     if not confirm:
         current = await _run(lambda c: control.DataModel(c).read(object, stack)) if stack and action != "add" else None
+        if current is not None:
+            current = [control.mask(row, always=True) for row in current]
         return _preview(summary, current=current)
     if not await _approved(ctx, summary):
         return {"status": "not applied", "reason": "the user did not approve it"}
-    return await _run(lambda c: control.DataModel(c).change(action, object, stack, parent_stack, attributes))
+    return await _run(lambda c: control.DataModel(c).change(action, object, stack, parent_stack, attributes), retry=False)
 
 
 @write_tool
@@ -256,7 +277,179 @@ async def router_run(operation: str, confirm: bool = False, ctx: Context | None 
         return _preview(f"run {op}")
     if not await _approved(ctx, f"run {op}"):
         return {"status": "not applied", "reason": "the user did not approve it"}
-    return await _run(lambda c: control.DataModel(c).run(op))
+    return await _run(lambda c: control.DataModel(c).run(op), retry=False)
+
+
+class SettingStep(BaseModel):
+    action: Literal["set", "add", "delete"]
+    object: str
+    stack: str = ""
+    parent_stack: str = ""
+    attributes: dict[str, str | int | float | bool] = Field(default_factory=dict)
+
+
+@write_tool
+async def router_apply(steps: list[SettingStep], confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Preview or apply an ordered series of settings changes. Stops at the first failure and reports prior steps.
+    Use for browser forms that save several settings objects. The router does not provide a transaction."""
+    if not steps:
+        raise ValueError("provide at least one setting change")
+    plan = []
+    for step in steps:
+        oid = step.object.strip().upper()
+        control.check_allowed(oid)
+        ex._validate(oid, step.attributes)
+        if {"stack", "pstack"}.intersection(step.attributes):
+            raise ValueError("pass stack and parent_stack as arguments")
+        plan.append({"action": step.action, "object": oid, "stack": control._stack(step.stack),
+                     "parent_stack": control._stack(step.parent_stack), "attributes": step.attributes})
+    shown = [control.mask(step, always=True) for step in plan]
+    summary = f"apply {len(plan)} ordered settings changes: {shown}"
+    if not confirm:
+        return _preview(summary, steps=shown)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+
+    def apply(c):
+        dm = control.DataModel(c)
+        applied = []
+        for index, step in enumerate(plan):
+            try:
+                applied.append(dm.change(step["action"], step["object"], step["stack"],
+                                         step["parent_stack"], step["attributes"]))
+            except (PermissionError, ValueError, RuntimeError) as error:
+                return {"status": "stopped", "applied": applied, "failed_step": index + 1, "error": str(error)}
+        return {"status": "applied", "applied": applied}
+
+    return await _run(apply, retry=False)
+
+
+DiagnosticKind = Literal["ping", "traceroute", "nslookup"]
+
+
+@write_tool
+async def start_diagnostic(kind: DiagnosticKind, host: str, confirm: bool = False,
+                           ctx: Context | None = None) -> dict:
+    """Start a single HB810 ping, traceroute or DNS lookup from the router. Read results with diagnostic_status."""
+    host = host.strip()
+    try:
+        ip_address(host)
+    except ValueError:
+        label = r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,61}[A-Za-z0-9])?"
+        if len(host) > 253 or not re.fullmatch(rf"{label}(?:\.{label})*\.?", host):
+            raise ValueError("provide one IP address or DNS hostname") from None
+    control.check_allowed(workflows.DIAGNOSTICS[kind][0])
+    control.check_allowed(workflows.DIAGNOSTIC_START)
+    summary = f"run {kind} from the router to {host}"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: workflows.diagnostic_start(c, kind, host), retry=False)
+
+
+@mcp.tool(annotations=READ)
+@_explain
+async def diagnostic_status(kind: DiagnosticKind) -> dict:
+    """Read the most recent EX router diagnostic state and results. Does not start a diagnostic."""
+    return await _run(lambda c: workflows.diagnostic_status(c, kind))
+
+
+@write_tool
+async def start_mesh_pairing(confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Open the HB810 EasyMesh push-button pairing window. Use mesh_pairing_status to check it."""
+    control.check_allowed(workflows.MESH_PAIR)
+    summary = "open the EasyMesh push-button pairing window"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: workflows.model(c).run(workflows.MESH_PAIR), retry=False)
+
+
+@mcp.tool(annotations=READ)
+@_explain
+async def mesh_pairing_status() -> list[dict]:
+    """Read EX router pairing state per radio without exposing WPS passwords or PINs."""
+    return await _run(workflows.mesh_pair_status)
+
+
+@write_tool
+async def manage_mesh_scan(action: Literal["start", "refresh", "add", "cancel"], mac: str = "",
+                           confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Start or refresh a mesh scan, add one scanned MAC, or return the controller to idle.
+    Read candidates with mesh_scan_status. Refresh during onboarding to update the topology."""
+    if action == "add":
+        mac = _norm_mac(mac)
+        control.check_allowed(workflows.MESH_CANDIDATE)
+    elif mac:
+        raise ValueError("mac applies only when adding a scanned device")
+    if action != "refresh":
+        control.check_allowed(workflows.MESH_SCAN)
+    if action == "start":
+        control.check_allowed(workflows.MESH_SCAN_REFRESH)
+    summary = f"{action} EasyMesh scanning" if action != "add" else f"add scanned EasyMesh device {mac}"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: workflows.mesh_scan(c, action, mac), retry=False)
+
+
+@mcp.tool(annotations=READ)
+@_explain
+async def mesh_scan_status() -> dict:
+    """Read the EasyMesh scan state and any cached candidates without starting or refreshing a scan."""
+    return await _run(workflows.mesh_scan_status)
+
+
+@write_tool
+async def export_router_file(kind: Literal["backup", "openvpn"], path: str, password: str = "",
+                             confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Save a router configuration backup or existing OpenVPN client profile to a new server-local file.
+    An optional password applies to a configuration backup. Contents are never included in the tool response."""
+    control.check_allowed(f"EXPORT_{kind.upper()}")
+    target = Path(path).expanduser().absolute()
+    if target.exists():
+        raise ValueError("export destination already exists")
+    if password and kind != "backup":
+        raise ValueError("password applies only to a configuration backup")
+    summary = f"save the router {kind} export to {target}"
+    if not confirm:
+        return _preview(summary)
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    try:
+        return await _run(lambda c: workflows.download(c, kind, target, password), retry=False)
+    except OSError as error:
+        raise RuntimeError(f"could not save export: {error.strerror}") from None
+
+
+@write_tool
+async def import_router_file(kind: Literal["restore", "firmware"], path: str, password: str = "",
+                             confirm: bool = False, ctx: Context | None = None) -> dict:
+    """Preview or apply a local EX router restore or upgrade from a server-local .bin file.
+    Applying may reboot the router and disconnect the network. A password applies only to a backup restore."""
+    for endpoint in workflows.UPLOADS[kind]:
+        control.check_allowed(endpoint)
+    if password and kind != "restore":
+        raise ValueError("password applies only to a configuration restore")
+    source = Path(path).expanduser().absolute()
+    if source.suffix.lower() != ".bin" or not source.is_file():
+        raise ValueError("provide an existing server-local .bin file")
+    try:
+        payload = await asyncio.to_thread(source.read_bytes)
+    except OSError as error:
+        raise RuntimeError(f"could not read the supplied file: {error.strerror}") from None
+    if not payload:
+        raise ValueError("the supplied file is empty")
+    digest = sha256(payload).hexdigest()
+    summary = f"apply {kind} from {source} (SHA-256 {digest}); the router may reboot and disconnect the network"
+    if not confirm:
+        return _preview(summary, sha256=digest, bytes=len(payload))
+    if not await _approved(ctx, summary):
+        return {"status": "not applied", "reason": "the user did not approve it"}
+    return await _run(lambda c: workflows.upload(c, kind, source, payload, password), retry=False)
 
 
 def _norm_mac(mac: str) -> str:
@@ -266,19 +459,26 @@ def _norm_mac(mac: str) -> str:
     return m
 
 
+def _reservation_rows(c):
+    oid = "DEV2_DHCPV4_POOL_STATICADDR" if isinstance(c, TPLinkEXClient) else "LAN_DHCP_STATIC_ADDR"
+    control.check_allowed(oid)
+    return oid, control.DataModel(c).read(oid, attributes=["chaddr", "yiaddr"])
+
+
 @write_tool
 async def set_static_ip(mac: str, ip: str, confirm: bool = False, ctx: Context | None = None) -> dict:
     """Give a device a fixed IP (address reservation): adds it, or updates the existing reservation for that MAC.
     The device gets the address the next time it renews its lease. Without confirm=true it only shows the plan."""
     mac = _norm_mac(mac)
-    control.check_allowed("LAN_DHCP_STATIC_ADDR")
+    if ip_address(ip).version != 4:
+        raise ValueError("provide an IPv4 address")
 
     def plan(c):
-        rows = control.DataModel(c).read("LAN_DHCP_STATIC_ADDR")
-        same = next((r for r in rows if r.get("chaddr", "").upper() == mac), None)
-        taken = next((r for r in rows if r.get("yiaddr") == ip and r.get("chaddr", "").upper() != mac), None)
-        return same, taken
-    same, taken = await _run(plan)
+        oid, rows = _reservation_rows(c)
+        same = next((r for r in rows if r.get("chaddr", "").upper().replace("-", ":") == mac), None)
+        taken = next((r for r in rows if r.get("yiaddr") == ip and r is not same), None)
+        return oid, same, taken
+    oid, same, taken = await _run(plan)
     if taken:
         return {"status": "not applied", "reason": f"{ip} is already reserved for {taken.get('chaddr')}"}
     summary = (f"change {mac} reservation from {same['yiaddr']} to {ip}" if same else f"reserve {ip} for {mac}")
@@ -286,19 +486,31 @@ async def set_static_ip(mac: str, ip: str, confirm: bool = False, ctx: Context |
         return _preview(summary)
     if not await _approved(ctx, summary):
         return {"status": "not applied", "reason": "the user did not approve it"}
-    attrs = {"chaddr": mac, "yiaddr": ip, "enable": "1"}
-    if same:
-        return await _run(lambda c: control.DataModel(c).change("set", "LAN_DHCP_STATIC_ADDR", same["_stack"], "", attrs))
-    return await _run(lambda c: control.DataModel(c).change("add", "LAN_DHCP_STATIC_ADDR", "", "1", attrs))
+    def apply(c):
+        if plan(c) != (oid, same, None):
+            raise RuntimeError("the reservations changed while waiting for approval; preview again")
+        dm = control.DataModel(c)
+        attrs = {"chaddr": mac, "yiaddr": ip, "enable": "1"}
+        if same:
+            return dm.change("set", oid, same["_stack"], attributes=attrs)
+        parent = "1"
+        if isinstance(c, TPLinkEXClient):
+            pools = dm.read("DEV2_DHCPV4_SERVER_POOL", attributes=["X_TP_MainPool"])
+            parents = [row["_stack"] for row in pools if str(row.get("X_TP_MainPool")) == "1"]
+            if len(parents) != 1 or parents[0] == control.ZERO:
+                raise RuntimeError("multiple or missing main DHCP pools; use router_change with a parent stack")
+            parent = parents[0]
+        return dm.change("add", oid, parent_stack=parent, attributes=attrs)
+
+    return await _run(apply, retry=False)
 
 
 @write_tool
 async def remove_static_ip(mac: str, confirm: bool = False, ctx: Context | None = None) -> dict:
     """Remove a device's fixed IP reservation. Without confirm=true it only shows the plan."""
     mac = _norm_mac(mac)
-    control.check_allowed("LAN_DHCP_STATIC_ADDR")
-    rows = await _run(lambda c: control.DataModel(c).read("LAN_DHCP_STATIC_ADDR"))
-    row = next((r for r in rows if r.get("chaddr", "").upper() == mac), None)
+    oid, rows = await _run(_reservation_rows)
+    row = next((r for r in rows if r.get("chaddr", "").upper().replace("-", ":") == mac), None)
     if not row:
         return {"status": "not applied", "reason": f"no reservation for {mac}"}
     summary = f"remove reservation {row.get('yiaddr')} for {mac}"
@@ -306,15 +518,25 @@ async def remove_static_ip(mac: str, confirm: bool = False, ctx: Context | None 
         return _preview(summary)
     if not await _approved(ctx, summary):
         return {"status": "not applied", "reason": "the user did not approve it"}
-    return await _run(lambda c: control.DataModel(c).change("delete", "LAN_DHCP_STATIC_ADDR", row["_stack"]))
+    def apply(c):
+        current_oid, current = _reservation_rows(c)
+        if current_oid != oid or row not in current:
+            raise RuntimeError("the reservation changed while waiting for approval; preview again")
+        return control.DataModel(c).change("delete", oid, row["_stack"])
+
+    return await _run(apply, retry=False)
 
 
 @write_tool
-async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabled: bool | None = None,
-                   hidden: bool | None = None, confirm: bool = False, ctx: Context | None = None) -> dict:
-    """Change a Wi-Fi network (index from wifi_networks): name, password, on/off, hidden. Devices on it drop and
-    must reconnect, with the new password if it changed. Without confirm=true it only shows the plan."""
-    control.check_allowed("LAN_WLAN")
+async def set_wifi(network_index: int | None = None, ssid: str = "", password: str = "", enabled: bool | None = None,
+                   hidden: bool | None = None, confirm: bool = False, ctx: Context | None = None,
+                   band: Literal["2.4GHz", "5GHz", "6GHz"] | None = None,
+                   kind: Literal["primary", "guest", "iot", "mlo", "mssid1", "mssid2", "mssid3"] = "primary") -> dict:
+    """Change one Wi-Fi profile. Select an EX profile by band and kind, or a legacy network by index.
+    Devices may disconnect and need to reconnect. Without confirm=true it only shows the plan."""
+    if (band is None) == (network_index is None):
+        raise ValueError("provide either an EX band or a legacy network index")
+    control.check_allowed("DEV2_ADT_WIFI_COMMON" if band else "LAN_WLAN")
     attrs: dict[str, str] = {}
     if ssid:
         attrs["SSID"] = ssid
@@ -328,6 +550,18 @@ async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabl
         attrs["SSIDAdvertisementEnabled"] = "0" if hidden else "1"
     if not attrs:
         raise ValueError("nothing to change")
+    if band:
+        prefix = "ioT" if kind == "iot" else kind
+        names = {"SSID": f"{prefix}SSID", "X_TP_PreSharedKey": f"{prefix}PSK",
+                 "Enable": "ioTssidEnable" if kind == "iot" else f"{prefix}Enable",
+                 "SSIDAdvertisementEnabled": f"{prefix}SSIDAdvertise"}
+        changes = {names[key]: value for key, value in attrs.items()}
+        summary = f"Wi-Fi {band} {kind}: {control.mask(changes, always=True)}"
+        if not confirm:
+            return _preview(summary)
+        if not await _approved(ctx, summary):
+            return {"status": "not applied", "reason": "the user did not approve it"}
+        return await _run(lambda c: workflows.set_wifi(c, band, changes), retry=False)
     stack = f"1,{network_index}"
     shown = {k: ("***" if k == "X_TP_PreSharedKey" else v) for k, v in attrs.items()}
     summary = f"Wi-Fi network {network_index}: {shown}"
@@ -335,7 +569,7 @@ async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabl
         return _preview(summary)
     if not await _approved(ctx, summary):
         return {"status": "not applied", "reason": "the user did not approve it"}
-    return await _run(lambda c: control.DataModel(c).change("set", "LAN_WLAN", stack, "", attrs))
+    return await _run(lambda c: control.DataModel(c).change("set", "LAN_WLAN", stack, "", attrs), retry=False)
 
 
 @write_tool
@@ -346,12 +580,18 @@ async def reboot_router(confirm: bool = False, ctx: Context | None = None) -> st
         return "Not rebooted. Call again with confirm=true to reboot."
     if not await _approved(ctx, "reboot (network and internet drop for a minute or two)"):
         return "Not rebooted: the user did not approve it."
-    await _run(lambda c: c.reboot())
+    def reboot(c):
+        if isinstance(c, TPLinkEXClient):
+            control.DataModel(c).run("ACT_REBOOT")
+        else:
+            c.reboot()
+
+    await _run(reboot, retry=False)
     return "Reboot requested; the router is back in about two minutes."
 
 
 def sample_once() -> int:
-    """`tplink-modem-mcp sample`: one presence sample for a timer (cron, systemd); prints the new events."""
+    """`tplink-hb810-mcp sample`: one presence sample for a timer (cron, systemd); prints the new events."""
     import json
     events = history.sample([d for d in router.call(_clients) if d["active"]])
     for e in events:
@@ -361,7 +601,8 @@ def sample_once() -> int:
 
 def main():
     import sys
-    logging.basicConfig(level=os.environ.get("TPLINK_LOG", "WARNING"))
+    logging.basicConfig(level=logging.WARNING)
+    log.setLevel(os.environ.get("TPLINK_LOG", "WARNING"))
     if sys.argv[1:] == ["sample"]:
         raise SystemExit(sample_once())
     mcp.run()
