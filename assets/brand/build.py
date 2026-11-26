@@ -1,4 +1,4 @@
-"""Build the tplink-modem-mcp brand kit: round logo, lockup, social preview (text outlined to paths)."""
+"""Build the tplink-modem brand kit: round logo, lockup, social preview (text outlined to paths)."""
 import base64, sys, pathlib
 from fontTools.ttLib import TTFont
 from fontTools.varLib import instancer
@@ -11,7 +11,7 @@ FONTS = pathlib.Path.home() / ".local/share/fonts/google"
 
 BLUE_TOP, BLUE_BOT = "#3AA0FF", "#0A5BEA"  # circle gradient
 NAVY = "#0A2540"
-ACCENT = "#FF8A1F"                        # status LED / "mcp"
+ACCENT = "#FF8A1F"                        # status LED / "modem"
 WHITE = "#FFFFFF"
 MUTED = "#A9C6F5"
 
@@ -82,8 +82,8 @@ def svg(w, h, body):
 # 2. Horizontal lockup (light and dark text)
 def lockup(text_fill, name):
     h = 160
-    a, wa = text_path(SANS_SB, "tplink-modem", 192, 103, 64, text_fill)
-    b, wb = text_path(SANS_SB, "-mcp", 192 + wa, 103, 64, ACCENT)
+    a, wa = text_path(SANS_SB, "tplink-", 192, 103, 64, text_fill)
+    b, wb = text_path(SANS_SB, "modem", 192 + wa, 103, 64, ACCENT)
     w = int(192 + wa + wb + 16)
     body = f'<g transform="translate(8 8) scale({144/512})">{mark("l"+name)}</g>{a}{b}'
     (OUT / f"lockup-{name}.svg").write_text(svg(w, h, body))
@@ -128,8 +128,8 @@ BG = '''<defs><linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
 
 
 BANNER_TEXT = {
-    "en": {"kicker": "MCP SERVER", "tagline": "Let your AI assistant see and manage your router"},
-    "tr": {"kicker": "MCP SUNUCUSU", "tagline": "Yapay zekâ asistanın modemini görsün ve yönetsin"},
+    "en": {"kicker": "CLI  +  MCP SERVER", "tagline": "See and manage your router from the terminal or your AI agent"},
+    "tr": {"kicker": "KOMUT SATIRI  +  MCP", "tagline": "Modemini terminalden ya da yapay zekâ ajanından yönet"},
 }
 
 for lang, t in BANNER_TEXT.items():
@@ -142,8 +142,8 @@ for lang, t in BANNER_TEXT.items():
     p.append(tp(MONO, t["kicker"], 64, 58, 15, WHITE, track=2.2, opacity=0.85)[0])
     p.append(tp(MONO, "PYTHON  /  GPL-3.0", 1216, 58, 15, WHITE, "end", track=2.2, opacity=0.85)[0])
     p.append('<rect x="64" y="560" width="1152" height="1.5" fill="#FFFFFF" fill-opacity="0.35"/>')
-    n1, nw = tp(SANS_SB, "tplink-modem", 64, 610, 34, WHITE)
-    n2, _ = tp(SANS_SB, "-mcp", 64 + nw, 610, 34, ACCENT)
+    n1, nw = tp(SANS_SB, "tplink-", 64, 610, 34, WHITE)
+    n2, _ = tp(SANS_SB, "modem", 64 + nw, 610, 34, ACCENT)
     p.append(n1 + n2)
     p.append(tp(SANS_RG, t["tagline"], 1216, 606, 21, CREAM, "end")[0])
     (OUT / f"banner.{lang}.svg").write_text(svg(W, H, "".join(p)))

@@ -11,7 +11,7 @@
 
 ## Name
 
-Always written in lowercase as one word: **tplink-modem-mcp**. In the lockup, `-mcp` is set in the accent color.
+Always written in lowercase as one word: **tplink-modem**. In the lockup, `modem` is set in the accent color.
 
 ## Colors
 
@@ -20,7 +20,7 @@ Always written in lowercase as one word: **tplink-modem-mcp**. In the lockup, `-
 | Circle top | `#3AA0FF` |
 | Circle bottom | `#0A5BEA` |
 | Ink (name on light backgrounds) | `#0A2540` |
-| Accent (`-mcp`) | `#FF8A1F` |
+| Accent (`modem`) | `#FF8A1F` |
 | Modem | White product image, `modem.png` |
 
 ## Type
