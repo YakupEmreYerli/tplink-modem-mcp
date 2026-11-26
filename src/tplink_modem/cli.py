@@ -10,7 +10,7 @@ import logging
 import os
 import sys
 
-from . import server
+from . import lock, server
 from .router import plain
 
 
@@ -71,6 +71,10 @@ def _parser() -> argparse.ArgumentParser:
     # --json also works after the command name; SUPPRESS keeps a value given before it.
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print the raw result as JSON")
+    device_help = "which configured device to use (default: the default device; see 'devices')"
+    p.add_argument("--device", default="", metavar="NAME", help=device_help)
+    common.add_argument("--device", default=argparse.SUPPRESS, metavar="NAME", help=device_help)
+    every = "do this on every configured device"
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
     def add(name, **kw):
@@ -79,8 +83,10 @@ def _parser() -> argparse.ArgumentParser:
     add("status", help="model, firmware, internet connection, Wi-Fi networks that are on, devices online")
     c = add("clients", help="devices on the network with IP, MAC, band, signal and link rate")
     c.add_argument("--all", action="store_true", help="include devices that are not connected now")
+    c.add_argument("--all-devices", action="store_true", help="scan every configured router, adds a 'device' column")
     c = add("find", help="devices whose name, IP or MAC contains the text")
     c.add_argument("query")
+    c.add_argument("--all-devices", action="store_true", help="search every configured router, adds a 'device' column")
     c = add("history", help="join / leave / IP-change events recorded by the sampler")
     c.add_argument("--hours", type=float, default=24)
     c.add_argument("--mac", default="")
@@ -130,7 +136,11 @@ def _parser() -> argparse.ArgumentParser:
     hid.add_argument("--visible", dest="hidden", action="store_const", const=False)
     change("reboot", "reboot the router (network and internet drop for a minute or two)")
 
-    add("sample", help="take one presence sample for the history (for a timer)")
+    c = add("sample", help="take one presence sample for the history (for a timer)")
+    c.add_argument("--all-devices", action="store_true", help=every)
+    add("devices", help="the configured routers, and whether a failed login has locked them")
+    c = add("unlock", help="allow logins to a device again after a refused login (changing its password does too)")
+    c.add_argument("name", nargs="?", default="", help="device name (default: the default device)")
     add("mcp", help="run the MCP server on stdin/stdout")
     return p
 
@@ -191,15 +201,59 @@ def _for_cli(result):
     return result
 
 
+def _devices_table() -> list[dict]:
+    reg = server.registry
+    return [{"name": n, "host": reg.config(n).host, "default": "yes" if n == reg.default else "no",
+             "locked": "yes" if lock.is_locked(reg.config(n)) else "no"} for n in reg.names()]
+
+
+async def _each_device(call, a) -> tuple[list[dict], bool]:
+    """Run one query on every device; a failing device is reported on stderr and does not stop the others."""
+    rows, failed = [], False
+    for name in server.registry.names():
+        try:
+            rows += [{"device": name, **r} for r in await call(name)]
+        except Exception as e:
+            print(f"error: {name}: {e}", file=sys.stderr)
+            failed = True
+    return rows, failed
+
+
 def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=os.environ.get("TPLINK_LOG", "WARNING"))
     a = _parser().parse_args(argv)
-    if a.command == "mcp":
-        server.mcp.run()
-        return 0
     try:
+        if a.device:
+            server.registry.use(a.device)
+        if a.command == "mcp":
+            server.mcp.run()
+            return 0
+        if a.command == "devices":
+            print(render(_devices_table(), a.json))
+            return 0
+        if a.command == "unlock":
+            name = server.registry.resolve(a.name)
+            print(f"{name}: unlocked" if lock.clear(name) else f"{name}: was not locked")
+            return 0
         if a.command == "sample":
-            return server.sample_once()
+            if not a.all_devices:
+                return server.sample_once()
+            codes = []
+            for name in server.registry.names():
+                try:
+                    codes.append(server.sample_once(name))
+                except Exception as e:
+                    print(f"error: {name}: {e}", file=sys.stderr)
+                    codes.append(1)
+            return int(any(codes))
+        if getattr(a, "all_devices", False):
+            if a.command == "clients":
+                rows, failed = asyncio.run(_each_device(
+                    lambda n: server.list_clients(include_inactive=a.all, device=n), a))
+            else:
+                rows, failed = asyncio.run(_each_device(lambda n: server.find_client(a.query, device=n), a))
+            print(render(rows, a.json))
+            return 1 if failed else 0
         result = asyncio.run(_call(a))
     except Exception as e:  # router, policy and argument errors: one readable line
         print(f"error: {e}", file=sys.stderr)

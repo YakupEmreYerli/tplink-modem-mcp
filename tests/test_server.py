@@ -26,6 +26,8 @@ async def test_tools_and_previews(tmp_path):
         assert all(tools[n].annotations.read_only_hint for n in READ_TOOLS)
         assert all(tools[n].annotations.destructive_hint for n in WRITE_TOOLS)
         assert "ctx" not in tools["set_wifi"].input_schema["properties"]
+        assert all("device" in t.input_schema["properties"] for t in tools.values())
+        assert all("device" not in t.input_schema.get("required", []) for t in tools.values())
 
         # Without confirm nothing reaches the router (there is none at 127.0.0.1:9).
         r = await s.call_tool("reboot_router", {})

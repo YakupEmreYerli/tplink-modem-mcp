@@ -144,7 +144,7 @@ def test_writes_disabled(monkeypatch, capsys):
 
 def test_reboot_without_confirm_does_not_reboot(monkeypatch, capsys):
     monkeypatch.delenv("TPLINK_WRITE", raising=False)
-    monkeypatch.setattr(server.router, "call", lambda fn: pytest.fail("router was called"))
+    monkeypatch.setattr(server.registry.router(), "call", lambda fn: pytest.fail("router was called"))
     assert cli.main(["reboot"]) == 0
     assert "--confirm" in capsys.readouterr().out
 
@@ -174,3 +174,87 @@ def test_refusal_exits_1(monkeypatch, capsys):
     monkeypatch.setattr(server, "set_static_ip", fake)
     assert cli.main(["static-ip", "aa:bb:cc:dd:ee:ff", "192.168.1.9"]) == 1
     assert "already reserved" in capsys.readouterr().out
+
+
+# ----- several devices -----
+
+@pytest.fixture
+def two_devices(tmp_path, monkeypatch):
+    from tplink_modem import history
+    from tplink_modem.devices import Devices
+    monkeypatch.setattr(history, "STATE", tmp_path / "state")
+    p = tmp_path / "devices.toml"
+    p.write_text('[[device]]\nname = "a"\nhost = "192.168.1.1"\ndefault = true\n'
+                 '[[device]]\nname = "b"\nhost = "192.168.0.5"\n')
+    monkeypatch.setattr(server, "registry", Devices(p))
+
+
+def test_clients_all_devices_adds_device_column(two_devices, monkeypatch, capsys):
+    async def fake(include_inactive=False, device=""):
+        return [{"hostname": "phone-" + device, "ip": "1.1.1.1", "mac": "aa", "active": True}]
+    monkeypatch.setattr(server, "list_clients", fake)
+    assert cli.main(["clients", "--all-devices"]) == 0
+    out = capsys.readouterr().out
+    assert out.splitlines()[0].split()[0] == "device"
+    assert "phone-a" in out and "phone-b" in out
+
+
+def test_find_all_devices_survives_one_failing(two_devices, monkeypatch, capsys):
+    async def fake(query, device=""):
+        if device == "a":
+            raise RuntimeError("login to http://192.168.1.1 failed earlier")
+        return [{"hostname": "phone", "ip": "1.1.1.1", "mac": "aa"}]
+    monkeypatch.setattr(server, "find_client", fake)
+    assert cli.main(["find", "phone", "--all-devices"]) == 1
+    cap = capsys.readouterr()
+    assert "phone" in cap.out and "b" in cap.out
+    assert "error: a: login to" in cap.err
+
+
+def test_device_option_selects_device(two_devices, monkeypatch):
+    seen = {}
+
+    async def fake(device=""):
+        seen["config"] = server.registry.config(device).name
+        return {}
+    monkeypatch.setattr(server, "router_status", fake)
+    assert cli.main(["--device", "b", "status"]) == 0
+    assert seen["config"] == "b"
+    assert cli.main(["status", "--device", "a"]) == 0
+    assert seen["config"] == "a"
+
+
+def test_unknown_device_is_one_line(two_devices, capsys):
+    assert cli.main(["--device", "zzz", "status"]) == 1
+    assert "unknown device 'zzz'" in capsys.readouterr().err
+
+
+def test_devices_command_lists_lock_state(two_devices, monkeypatch, capsys):
+    from tplink_modem import lock
+    monkeypatch.setenv("TPLINK_PASSWORD", "pw")
+    lock.set(server.registry.config("a"))
+    assert cli.main(["devices"]) == 0
+    lines = capsys.readouterr().out.splitlines()
+    assert lines[0].split() == ["name", "host", "default", "locked"]
+    assert lines[1].split() == ["a", "http://192.168.1.1", "yes", "yes"]
+    assert lines[2].split() == ["b", "http://192.168.0.5", "no", "no"]
+
+
+def test_unlock_command(two_devices, monkeypatch, capsys):
+    from tplink_modem import lock
+    monkeypatch.setenv("TPLINK_PASSWORD", "pw")
+    lock.set(server.registry.config("a"))
+    assert cli.main(["unlock", "a"]) == 0
+    assert not lock.is_locked(server.registry.config("a"))
+    assert cli.main(["unlock", "a"]) == 0
+    assert "was not locked" in capsys.readouterr().out
+
+
+def test_sample_all_devices(two_devices, monkeypatch, capsys):
+    seen = []
+    monkeypatch.setattr(server, "sample_once", lambda device="": seen.append(device) or 0)
+    assert cli.main(["sample", "--all-devices"]) == 0
+    assert seen == ["a", "b"]
+    seen.clear()
+    assert cli.main(["sample"]) == 0
+    assert seen == [""]
