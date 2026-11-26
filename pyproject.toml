@@ -27,6 +27,7 @@ Homepage = "https://github.com/YakupEmreYerli/tplink-modem"
 Issues = "https://github.com/YakupEmreYerli/tplink-modem/issues"
 
 [project.scripts]
+tplink-modem = "tplink_modem.cli:main"
 tplink-modem-mcp = "tplink_modem.server:main"
 
 [build-system]
