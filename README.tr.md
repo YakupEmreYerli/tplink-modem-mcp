@@ -1,16 +1,17 @@
-# tplink-modem-mcp
+# tplink-modem
 
-Evdeki TP-Link modemi ya da internet sağlayıcısının verdiği TP-Link modemi yapay zekâ asistanına yönettiren bir
-[MCP](https://modelcontextprotocol.io) sunucusu. Modemin arayüzünü açmana gerek kalmaz: kimin bağlı olduğunu ve
+Evdeki TP-Link modemi ya da internet sağlayıcısının verdiği TP-Link modemi komut satırından, betiklerinden ya da
+yapay zekâ ajanınla yönetmeni sağlayan bir komut satırı aracı ve [MCP](https://modelcontextprotocol.io) sunucusu.
+Modemin arayüzünü açmana gerek kalmaz: kimin bağlı olduğunu ve
 sinyalini görür, bir cihaza sabit IP verir, Wi-Fi'ı değiştirir, kayıtları okur; arayüzde yapılabilen her şeyi
 yapar. Her değişikliği önce sana gösterir, sen onaylamadan uygulamaz.
 
-[![CI](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/YakupEmreYerli/tplink-modem-mcp/actions/workflows/ci.yml)
-[![PyPI](https://img.shields.io/pypi/v/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
-[![Python](https://img.shields.io/pypi/pyversions/tplink-modem-mcp)](https://pypi.org/project/tplink-modem-mcp/)
+[![CI](https://github.com/YakupEmreYerli/tplink-modem/actions/workflows/ci.yml/badge.svg)](https://github.com/YakupEmreYerli/tplink-modem/actions/workflows/ci.yml)
+[![PyPI](https://img.shields.io/pypi/v/tplink-modem)](https://pypi.org/project/tplink-modem/)
+[![Python](https://img.shields.io/pypi/pyversions/tplink-modem)](https://pypi.org/project/tplink-modem/)
 [![Lisans: GPL-3.0](https://img.shields.io/badge/lisans-GPL--3.0-blue)](LICENSE)
 
-![tplink-modem-mcp](assets/brand/banner.tr.png)
+![tplink-modem](assets/brand/banner.tr.png)
 
 [English](README.md)
 
@@ -27,7 +28,37 @@ Asistana şunları sorabilirsin:
 - "Yazıcıya 192.168.1.50 sabit IP'sini ver."
 - "Misafir Wi-Fi'ı kapat." / "25565 portunu bilgisayarıma yönlendir."
 
-## Araç listesi
+## Komut satırı
+
+```sh
+uv tool install tplink-modem          # ya da: pipx install tplink-modem
+export TPLINK_PASSWORD='<modem şifresi>'
+
+tplink-modem status                   # model, internet, Wi-Fi, bağlı cihaz sayısı
+tplink-modem clients                  # kim bağlı, sinyali ve hızı ne
+tplink-modem find tv
+tplink-modem logs --module DHCPD --limit 20
+tplink-modem history --hours 6        # kim girdi kim çıktı (bkz. Cihaz geçmişi)
+```
+
+Değişiklik yapan komutlar önce ne yapacağını gösterip durur; uygulamak için `--confirm` ekle:
+
+```sh
+$ tplink-modem static-ip AA:BB:CC:DD:EE:FF 192.168.1.50
+would do: reserve 192.168.1.50 for AA:BB:CC:DD:EE:FF
+Not applied. Run again with --confirm to apply.
+
+$ tplink-modem static-ip AA:BB:CC:DD:EE:FF 192.168.1.50 --confirm
+```
+
+Çıktı kısa düz metindir; betikler için `--json` ham sonucu basar. `tplink-modem --help` bütün komutları listeler,
+her komut aşağıdaki bir MCP aracının karşılığıdır: `read`, `change` ve `run` arayüzdeki her ayara ulaşır. Çıkış
+kodları: 0 tamam (ya da önizleme), 1 modem ya da kurallar reddetti, 2 yanlış kullanım.
+
+Komut çalıştırabilen ajanlar MCP sunucusu yerine komut satırını kullanabilir; araç listesi baştan yüklenmediği için
+çok daha az token harcar.
+
+## MCP araçları
 
 | Araç | Ne yapar |
 | --- | --- |
@@ -58,7 +89,7 @@ anahtarlar gizlenir.
 eski sağlayıcı modemleri ve MR / VR aileleri. Öteki modellerde tplinkrouterc6u'nun desteklediği hazır araçlar
 yine çalışır.
 
-## Kurulum
+## MCP sunucusu
 
 [uv](https://docs.astral.sh/uv/) ve modemin arayüz şifresi gerekiyor. Sunucu, modemle aynı ağdaki bir bilgisayarda
 çalışmalı.
@@ -66,7 +97,7 @@ yine çalışır.
 Claude Code:
 
 ```sh
-claude mcp add tplink-modem -e TPLINK_PASSWORD='<modem şifresi>' -- uvx tplink-modem-mcp
+claude mcp add tplink-modem -e TPLINK_PASSWORD='<modem şifresi>' -- uvx tplink-modem mcp
 ```
 
 Claude Desktop, Cursor ve JSON ayar dosyası kullanan öteki istemciler:
@@ -76,14 +107,17 @@ Claude Desktop, Cursor ve JSON ayar dosyası kullanan öteki istemciler:
   "mcpServers": {
     "tplink-modem": {
       "command": "uvx",
-      "args": ["tplink-modem-mcp"],
+      "args": ["tplink-modem", "mcp"],
       "env": { "TPLINK_PASSWORD": "<modem şifresi>" }
     }
   }
 }
 ```
 
-PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tplink-modem-mcp run tplink-modem-mcp`.
+PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tplink-modem run tplink-modem mcp`.
+
+Projenin adı 0.3.0'dan önce `tplink-modem-mcp` idi. Eski `tplink-modem-mcp` komutu MCP sunucusunu açmaya devam eder;
+eski cihaz geçmişi klasörü varsa geçmiş oradan okunur.
 
 ## Ayarlar
 
@@ -95,7 +129,7 @@ PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tpl
 | `TPLINK_CLIENT` | otomatik | `legacy` ya da `TPLinkMRClient` gibi bir tplinkrouterc6u sınıf adı |
 | `TPLINK_TIMEOUT` | `20` | modeme giden her istek için saniye |
 | `TPLINK_PRESENCE_INTERVAL` | `60` | sunucu açıkken cihaz listesine kaç saniyede bir bakılacağı; `0` kapatır |
-| `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem-mcp` | cihaz geçmişinin tutulduğu klasör |
+| `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem` | cihaz geçmişinin tutulduğu klasör |
 | `TPLINK_LOG` | `WARNING` | kayıt düzeyi; `DEBUG` modeme giden her isteği gösterir |
 | `TPLINK_WRITE` | `on` | `off` sunucuyu yalnız okur hâle getirir, değiştiren araçlar hiç görünmez |
 | `TPLINK_ALLOW` | (hepsi) | değiştirilebilecek nesne ya da işlemler, virgülle; `*` sonunu tutar, örneğin `LAN_DHCP*,LAN_WLAN` |
@@ -115,12 +149,12 @@ devralmak isteyip istemediğini sorabilir.
 Modem, bir cihazın ne zaman gelip gittiğini hatırlamaz. Bu yüzden sunucu dakikada bir cihaz listesine bakar ve
 giriş, çıkış ve IP değişikliklerini klasördeki `presence.jsonl` dosyasına yazar. Bunu yalnız açıkken yapar.
 
-Geçmişin gece gündüz tutulması için hep açık duran bir bilgisayarda `tplink-modem-mcp sample` komutunu dakikada
+Geçmişin gece gündüz tutulması için hep açık duran bir bilgisayarda `tplink-modem sample` komutunu dakikada
 bir zamanlayıcıyla çalıştır, MCP sunucusunu da `TPLINK_PRESENCE_INTERVAL=0` ile başlat. Böylece dosyaya yalnız
 zamanlayıcı yazar:
 
 ```sh
-* * * * * TPLINK_PASSWORD=... uvx tplink-modem-mcp sample
+* * * * * TPLINK_PASSWORD=... uvx tplink-modem sample
 ```
 
 ## Denendiği modemler
@@ -129,7 +163,7 @@ zamanlayıcı yazar:
 
 tplinkrouterc6u'nun desteklediği modellerin onun üzerinden çalışması gerekir. Başka bir modelde denediysen
 çalışsa da çalışmasa da bir
-[model raporu aç](https://github.com/YakupEmreYerli/tplink-modem-mcp/issues/new?template=model-report.yml).
+[model raporu aç](https://github.com/YakupEmreYerli/tplink-modem/issues/new?template=model-report.yml).
 
 ## Güvenlik
 
