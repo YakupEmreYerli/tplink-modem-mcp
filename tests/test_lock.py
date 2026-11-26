@@ -24,6 +24,13 @@ class FakeClient:
             raise self.error
 
 
+def refuse(r, times=3):
+    for _ in range(times):
+        with pytest.raises(LoginFailed) as e:
+            r.call(lambda c: 1)
+    return e.value
+
+
 def router(error=None, password="pw", name="home"):
     r = Router(Config(name=name, host="192.168.1.1", username="admin", password=password))
     client = FakeClient(error)
@@ -31,18 +38,49 @@ def router(error=None, password="pw", name="home"):
     return r, client
 
 
-def test_auth_failure_locks_and_tries_login_once():
+def test_three_consecutive_failures_lock_one_login_per_call():
     r, client = router(AuthorizeError("login refused (71233: wrong username or password)"))
-    with pytest.raises(LoginFailed, match="unlock home"):
+    e = refuse(r)
+    assert "unlock home" in str(e)
+    assert client.logins == 3  # no second attempt inside a call: a retry would count as another failed login
+    assert lock.is_locked(r.config)
+
+
+def test_one_and_two_failures_do_not_lock_and_say_tries_left():
+    r, _ = router(AuthorizeError("login refused"))
+    e = refuse(r, 1)
+    assert "2 more failed tries before it is locked" in str(e) and not lock.is_locked(r.config)
+    e = refuse(r, 1)
+    assert "1 more failed try before it is locked" in str(e) and not lock.is_locked(r.config)
+
+
+def test_success_resets_the_count():
+    r, client = router(AuthorizeError("login refused"))
+    refuse(r, 2)
+    client.error = None
+    assert r.call(lambda c: 5) == 5
+    client.error = AuthorizeError("login refused")
+    refuse(r, 2)
+    assert not lock.is_locked(r.config)
+    refuse(r, 1)
+    assert lock.is_locked(r.config)
+
+
+def test_network_error_neither_counts_nor_resets():
+    r, client = router(AuthorizeError("login refused"))
+    refuse(r, 2)
+    client.error = requests.ConnectTimeout("t")
+    with pytest.raises(requests.ConnectTimeout):
         r.call(lambda c: 1)
-    assert client.logins == 1  # no second attempt: a retry would count as another failed login
+    assert lock.failures(r.config) == 2
+    client.error = AuthorizeError("login refused")
+    refuse(r, 1)
     assert lock.is_locked(r.config)
 
 
 def test_locked_device_is_not_tried_again():
     r, client = router(AuthorizeError("login refused (71233: x)"))
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)
     r2, client2 = router()
     with pytest.raises(lock.LoginLocked) as e:
         r2.call(lambda c: 1)
@@ -53,8 +91,8 @@ def test_locked_device_is_not_tried_again():
 
 def test_library_wrong_password_is_auth_failure():
     r, _ = router(ClientException("TplinkRouter - Archer - Cannot authorize! Error - 'stok'; Response - {}"))
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r, 1)
+    assert lock.failures(r.config) == 1
 
 
 @pytest.mark.parametrize("error", [
@@ -97,8 +135,7 @@ def test_error_inside_the_call_does_not_lock():
 
 def test_new_password_clears_lock():
     r, _ = router(AuthorizeError("login refused"))
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)
     r2, client2 = router(password="new-pw")
     assert r2.call(lambda c: 7) == 7
     assert client2.logins == 1 and not lock.is_locked(r2.config)
@@ -106,8 +143,7 @@ def test_new_password_clears_lock():
 
 def test_unlock():
     r, _ = router(AuthorizeError("login refused"))
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)
     assert lock.clear("home") is True
     assert lock.clear("home") is False
     assert not lock.is_locked(r.config)
@@ -115,8 +151,7 @@ def test_unlock():
 
 def test_lock_file_never_holds_the_password(state):
     r, _ = router(AuthorizeError("login refused"), password="hunter2-secret")
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)
     files = list(state.rglob("*"))
     assert any(f.is_file() for f in files)
     assert all("hunter2-secret" not in f.read_text() for f in files if f.is_file())
@@ -124,8 +159,7 @@ def test_lock_file_never_holds_the_password(state):
 
 def test_locks_are_per_device():
     r, _ = router(AuthorizeError("login refused"), name="a")
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)
     other, client = router(name="b")
     assert other.call(lambda c: 3) == 3
 
@@ -161,5 +195,4 @@ def test_wrong_password_answer_still_locks():
     except ClientException as err:
         error = err
     r, _ = router(error)
-    with pytest.raises(LoginFailed):
-        r.call(lambda c: 1)
+    refuse(r)

@@ -93,10 +93,12 @@ class Router:
                     except Exception as e:
                         if not is_auth_failure(e):
                             raise
-                        lock.set(self.config)
-                        raise LoginFailed(
-                            f"login to {self.config.host} failed ({e}); not retrying until the password changes "
-                            f"or you run 'tplink-modem unlock {self.config.name}'") from e
+                        left = lock.fail(self.config)
+                        after = (f"{left} more failed {'try' if left == 1 else 'tries'} before it is locked"
+                                 if left else f"not retrying until the password changes or you run "
+                                              f"'tplink-modem unlock {self.config.name}'")
+                        raise LoginFailed(f"login to {self.config.host} failed ({e}); {after}") from e
+                    lock.reset(self.config)
                     return fn(self._client)
                 except LoginFailed:
                     self._client = None

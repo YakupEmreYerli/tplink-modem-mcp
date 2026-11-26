@@ -174,18 +174,20 @@ tplink-modem sample --all-devices
 Every MCP tool takes an optional `device`. Each device has its own presence history; the default device keeps the
 existing `presence.jsonl`.
 
-## Failed logins lock the device
+## Repeated failed logins lock the device
 
 TP-Link locks the admin login after a few wrong attempts, and a timer that keeps trying would keep it locked. When a
-router refuses a login, `tplink-modem` records a lock for that device and stops trying:
+router refuses a login three times in a row, `tplink-modem` locks that device and stops trying. A single refusal can
+be a session conflict (the router allows one admin session at a time), so it only warns how many tries are left; a
+login that works resets the count. Once locked:
 
 ```
 error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
 ```
 
 The lock lifts by itself when the device's host, username or password changes, or with `tplink-modem unlock <device>`.
-Only a refused login locks; a timeout or an unreachable router does not. The lock file stores a salted hash, never the
-password.
+Only a refused login counts; a timeout or an unreachable router neither counts nor resets. The state file stores a
+salted hash, never the password.
 
 ## Presence history
 

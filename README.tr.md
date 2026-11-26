@@ -178,18 +178,20 @@ tplink-modem sample --all-devices
 Her MCP aracı isteğe bağlı `device` alır. Her cihazın kendi geçmişi var; varsayılan cihaz mevcut `presence.jsonl`
 dosyasını korur.
 
-## Yanlış girişte cihaz kilitlenir
+## Üst üste yanlış girişte cihaz kilitlenir
 
 TP-Link birkaç yanlış denemeden sonra yönetici girişini kilitler; sürekli deneyen bir zamanlayıcı kilidi açık
-bırakmaz. Router girişi reddedince `tplink-modem` o cihaz için kilit kaydı yazar ve denemeyi bırakır:
+bırakmaz. Router girişi üst üste üç kez reddedince `tplink-modem` o cihazı kilitler ve denemeyi bırakır. Tek bir ret oturum
+çakışması olabilir (router aynı anda tek yönetici oturumuna izin verir); bu yüzden yalnız kaç deneme kaldığını
+söyler, çalışan bir giriş sayacı sıfırlar. Kilitlenince:
 
 ```
 error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
 ```
 
 Kilit, cihazın adresi, kullanıcı adı ya da şifresi değişince kendiliğinden kalkar; bir de
-`tplink-modem unlock <cihaz>` ile kaldırılır. Yalnız reddedilen giriş kilitler; zaman aşımı ya da ulaşılamayan router
-kilitlemez. Kilit dosyasında şifre değil, tuzlu bir özet durur.
+`tplink-modem unlock <cihaz>` ile kaldırılır. Yalnız reddedilen giriş sayılır; zaman aşımı ya da ulaşılamayan router
+ne sayılır ne sıfırlar. Durum dosyasında şifre değil, tuzlu bir özet durur.
 
 ## Cihaz geçmişi
 
