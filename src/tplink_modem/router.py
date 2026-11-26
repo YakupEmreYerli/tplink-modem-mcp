@@ -10,22 +10,50 @@ from dataclasses import fields, is_dataclass
 from enum import Enum
 from ipaddress import IPv4Address, IPv6Address
 
+import requests
 from tplinkrouterc6u import TplinkRouterProvider
 import tplinkrouterc6u
+from tplinkrouterc6u.common.exception import AuthorizeError, ClientException
 
+from . import lock
 from .legacy import LegacyCgiClient
 
 log = logging.getLogger(__name__)
 
 
+class LoginFailed(RuntimeError):
+    """The router refused the login; the device is now locked."""
+
+
+# AuthorizeError messages that are about the connection, not the credentials.
+_NOT_CREDENTIALS = ("Cannot connect", "Session timed out", "Login timed out")
+
+
+def is_auth_failure(e: Exception) -> bool:
+    """True only when the router answered and refused the login. Timeouts, unreachable hosts and garbled
+    answers are not: they must not lock the device."""
+    cause = e
+    while cause is not None:
+        if isinstance(cause, (requests.RequestException, OSError)):
+            return False
+        cause = cause.__cause__
+    if isinstance(e, AuthorizeError):
+        return not str(e).startswith(_NOT_CREDENTIALS)
+    # tplinkrouterc6u clients (Archer, MR, ...) raise a plain ClientException once the login answer is wrong.
+    return type(e) is ClientException and "Cannot authorize" in str(e)
+
+
 class Config:
-    def __init__(self):
-        self.host = os.environ.get("TPLINK_HOST", "http://192.168.1.1").rstrip("/")
+    def __init__(self, name: str = "default", host: str | None = None, username: str | None = None,
+                 password: str | None = None, client: str | None = None):
+        self.name = name
+        self.host = (host or os.environ.get("TPLINK_HOST", "http://192.168.1.1")).rstrip("/")
         if "://" not in self.host:
             self.host = "http://" + self.host
-        self.username = os.environ.get("TPLINK_USERNAME", "admin")
-        self.password = os.environ.get("TPLINK_PASSWORD", "")
-        self.client = os.environ.get("TPLINK_CLIENT", "")  # "legacy", a tplinkrouterc6u class name, or empty = auto-detect
+        self.username = username or os.environ.get("TPLINK_USERNAME", "admin")
+        self.password = os.environ.get("TPLINK_PASSWORD", "") if password is None else password
+        # "legacy", a tplinkrouterc6u class name, or empty = auto-detect
+        self.client = os.environ.get("TPLINK_CLIENT", "") if client is None else client
         self.timeout = int(os.environ.get("TPLINK_TIMEOUT", "20"))
 
 
@@ -49,14 +77,29 @@ class Router:
         return TplinkRouterProvider.get_client(c.host, c.password, c.username, timeout=c.timeout)
 
     def call(self, fn):
-        """Run fn(client) logged in; on failure drop the session, log in again and retry once."""
+        """Run fn(client) logged in; on failure drop the session, log in again and retry once.
+
+        A refused login is the exception: the device is locked and nothing tries again, because the router
+        locks the admin account after a few wrong attempts."""
         with self._lock:
+            lock.check(self.config)
             for attempt in (1, 2):
                 try:
                     if self._client is None:
                         self._client = self._make_client()
-                    self._client.authorize()
+                    try:
+                        self._client.authorize()
+                    except Exception as e:
+                        if not is_auth_failure(e):
+                            raise
+                        lock.set(self.config)
+                        raise LoginFailed(
+                            f"login to {self.config.host} failed ({e}); not retrying until the password changes "
+                            f"or you run 'tplink-modem unlock {self.config.name}'") from e
                     return fn(self._client)
+                except LoginFailed:
+                    self._client = None
+                    raise
                 except Exception:
                     log.debug("router call failed (attempt %d)", attempt, exc_info=True)
                     self._client = None

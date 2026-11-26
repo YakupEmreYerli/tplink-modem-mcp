@@ -17,6 +17,10 @@ from tplinkrouterc6u.common.exception import AuthorizeError, ClientException
 LOGIN_ERRORS = {71233: "wrong username or password", 71234: "bad login request"}
 
 
+class LoginRefused(AuthorizeError):
+    """The router answered the login with a refusal (wrong credentials, or it has locked the account)."""
+
+
 class LegacyCgiClient(TPLinkMR200Client):
     ROUTER_NAME = "TP-Link legacy CGI"
 
@@ -58,8 +62,10 @@ class LegacyCgiClient(TPLinkMR200Client):
                           timeout=self.timeout)
         m = re.search(r"\$\.ret=(\d+)", r.text)
         ret = int(m.group(1)) if m else -1
+        if ret == -1:
+            raise ClientException("login: the router sent an answer this client does not understand")
         if ret != 0:
-            raise AuthorizeError(f"login refused ({ret}: {LOGIN_ERRORS.get(ret, 'unknown')})")
+            raise LoginRefused(f"login refused ({ret}: {LOGIN_ERRORS.get(ret, 'unknown')})")
         self.req.post(f"{self.host}/cgi/info", timeout=self.timeout)
         # Some firmwares add a TokenID next to the session cookie; the Archer C5v uses the cookie alone.
         page = self.req.get(self.host, timeout=self.timeout).text
