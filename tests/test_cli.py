@@ -232,7 +232,7 @@ def test_unknown_device_is_one_line(two_devices, capsys):
 def test_devices_command_lists_lock_state(two_devices, monkeypatch, capsys):
     from tplink_modem import lock
     monkeypatch.setenv("TPLINK_PASSWORD", "pw")
-    lock.set(server.registry.config("a"))
+    lock.lock_now(server.registry.config("a"))
     assert cli.main(["devices"]) == 0
     lines = capsys.readouterr().out.splitlines()
     assert lines[0].split() == ["name", "host", "default", "locked"]
@@ -243,7 +243,7 @@ def test_devices_command_lists_lock_state(two_devices, monkeypatch, capsys):
 def test_unlock_command(two_devices, monkeypatch, capsys):
     from tplink_modem import lock
     monkeypatch.setenv("TPLINK_PASSWORD", "pw")
-    lock.set(server.registry.config("a"))
+    lock.lock_now(server.registry.config("a"))
     assert cli.main(["unlock", "a"]) == 0
     assert not lock.is_locked(server.registry.config("a"))
     assert cli.main(["unlock", "a"]) == 0

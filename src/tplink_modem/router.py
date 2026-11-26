@@ -41,7 +41,8 @@ def is_auth_failure(e: Exception) -> bool:
     if isinstance(e, AuthorizeError):
         return not str(e).startswith(_NOT_CREDENTIALS)
     # tplinkrouterc6u clients (Archer, MR, ...) raise a plain ClientException once the login answer is wrong.
-    return type(e) is ClientException and "Cannot authorize" in str(e)
+    # The MR family says "Login failed, wrong password", TplinkRouterV1_11 "Login failed: <code>".
+    return type(e) is ClientException and ("Cannot authorize" in str(e) or "Login failed" in str(e))
 
 
 class Config:

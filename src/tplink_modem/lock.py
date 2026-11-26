@@ -1,4 +1,5 @@
-"""Login lock: after three refused logins in a row, that device is not tried again until its credentials change.
+"""Login lock: after three refused logins in a row, that device is not tried again until its credentials change or the lock
+expires (TPLINK_LOCK_MINUTES, default 60), after which one attempt is allowed.
 
 TP-Link locks the admin account after a few wrong attempts, and a timer that retries every minute would keep it
 locked. A single refusal can also be a session conflict (the router allows one admin session at a time), so only
@@ -15,6 +16,14 @@ from . import history
 
 
 MAX_FAILURES = 3
+
+
+def _now() -> float:
+    return time.time()
+
+
+def _expiry_seconds() -> float:
+    return float(os.environ.get("TPLINK_LOCK_MINUTES", "60")) * 60
 
 
 class LoginLocked(RuntimeError):
@@ -50,7 +59,10 @@ def failures(config) -> int:
 
 
 def is_locked(config) -> bool:
-    return failures(config) >= MAX_FAILURES
+    """Locked after MAX_FAILURES refusals, until the lock expires; then exactly one attempt is allowed. If it
+    fails the count goes up and the lock is renewed, if it works the count is reset."""
+    data = _read(config) if config.password else None
+    return bool(data) and data["failures"] >= MAX_FAILURES and _now() - data["time"] < _expiry_seconds()
 
 
 def check(config) -> None:
@@ -63,10 +75,13 @@ def _write(config, count: int) -> None:
     path = _path(config.name)
     path.parent.mkdir(parents=True, exist_ok=True)
     salt = os.urandom(16)
-    data = {"time": int(time.time()), "host": config.host, "failures": count, "salt": salt.hex(),
+    data = {"time": _now(), "host": config.host, "failures": count, "salt": salt.hex(),
             "fingerprint": _fingerprint(config, salt)}
-    path.write_text(json.dumps(data))
-    path.chmod(0o600)
+    tmp = path.with_suffix(".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(data))
+    os.replace(tmp, path)
 
 
 def fail(config) -> int:
@@ -76,7 +91,7 @@ def fail(config) -> int:
     return max(MAX_FAILURES - count, 0)
 
 
-def set(config) -> None:
+def lock_now(config) -> None:
     _write(config, MAX_FAILURES)
 
 

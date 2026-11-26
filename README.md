@@ -128,6 +128,7 @@ This project was called `tplink-modem-mcp` before 0.3.0. If your config runs `uv
 | `TPLINK_TIMEOUT` | `20` | seconds per request to the router |
 | `TPLINK_PRESENCE_INTERVAL` | `60` | seconds between presence samples while the server runs; `0` turns it off |
 | `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem` | where the presence history is kept |
+| `TPLINK_LOCK_MINUTES` | `60` | how long a device stays locked after three refused logins |
 | `TPLINK_LOG` | `WARNING` | log level, `DEBUG` shows every router call |
 | `TPLINK_WRITE` | `on` | `off` makes the server read-only: change tools are not offered at all |
 | `TPLINK_ALLOW` | (all) | comma-separated objects or operations that may be changed, `*` matches a suffix, e.g. `LAN_DHCP*,LAN_WLAN` |
@@ -171,21 +172,25 @@ tplink-modem clients --all-devices
 tplink-modem sample --all-devices
 ```
 
-Every MCP tool takes an optional `device`. Each device has its own presence history; the default device keeps the
-existing `presence.jsonl`.
+Every MCP tool takes an optional `device`. Each device has its own presence history. The default device keeps the
+existing history files (`presence.jsonl`, `last.json`), so mark your original router `default = true`; changing which
+device is the default swaps the histories, and nothing is migrated. The MCP server's background sampler only records
+the default device; record the others with `tplink-modem sample --all-devices` on a timer.
 
 ## Repeated failed logins lock the device
 
 TP-Link locks the admin login after a few wrong attempts, and a timer that keeps trying would keep it locked. When a
 router refuses a login three times in a row, `tplink-modem` locks that device and stops trying. A single refusal can
 be a session conflict (the router allows one admin session at a time), so it only warns how many tries are left; a
-login that works resets the count. Once locked:
+login that works resets the count. Leaving the router's web UI open in a browser can cause such refusals. Once locked:
 
 ```
 error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
 ```
 
 The lock lifts by itself when the device's host, username or password changes, or with `tplink-modem unlock <device>`.
+It also expires after 60 minutes (`TPLINK_LOCK_MINUTES`); then exactly one login is tried. If it fails the device is
+locked for another period, if it works the count resets. At worst that is one attempt per hour.
 Only a refused login counts; a timeout or an unreachable router neither counts nor resets. The state file stores a
 salted hash, never the password.
 

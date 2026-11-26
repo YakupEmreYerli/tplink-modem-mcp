@@ -56,12 +56,19 @@ class Devices:
             rows = tomllib.loads(path.read_text()).get("device", [])
         except tomllib.TOMLDecodeError as e:
             raise ValueError(f"{path}: {e}") from e
+        if not isinstance(rows, list):
+            raise ValueError(f"{path}: write each router as [[device]] (double brackets)")
+        envs: dict[str, str] = {}
         for row in rows:
             name = str(row.get("name", ""))
             if not _NAME.match(name):
                 raise ValueError(f"{path}: bad device name {name!r} (letters, digits, '-' and '_')")
             if name in self._entries:
                 raise ValueError(f"{path}: device {name!r} listed twice")
+            if self._env(name) in envs:
+                raise ValueError(f"{path}: devices {envs[self._env(name)]!r} and {name!r} would both read "
+                                 f"TPLINK_PASSWORD_{self._env(name)}")
+            envs[self._env(name)] = name
             if "password" in row:
                 raise ValueError(f"{path}: device {name!r}: passwords do not belong in this file; "
                                  f"set TPLINK_PASSWORD_{self._env(name)}")

@@ -131,6 +131,7 @@ olarak değiştir: `tplink-modem-mcp`'nin son sürümü yalnız `tplink-modem`'i
 | `TPLINK_TIMEOUT` | `20` | modeme giden her istek için saniye |
 | `TPLINK_PRESENCE_INTERVAL` | `60` | sunucu açıkken cihaz listesine kaç saniyede bir bakılacağı; `0` kapatır |
 | `TPLINK_STATE_DIR` | `$XDG_STATE_HOME/tplink-modem` | cihaz geçmişinin tutulduğu klasör |
+| `TPLINK_LOCK_MINUTES` | `60` | üç reddedilen girişten sonra cihazın kaç dakika kilitli kalacağı |
 | `TPLINK_LOG` | `WARNING` | kayıt düzeyi; `DEBUG` modeme giden her isteği gösterir |
 | `TPLINK_WRITE` | `on` | `off` sunucuyu yalnız okur hâle getirir, değiştiren araçlar hiç görünmez |
 | `TPLINK_ALLOW` | (hepsi) | değiştirilebilecek nesne ya da işlemler, virgülle; `*` sonunu tutar, örneğin `LAN_DHCP*,LAN_WLAN` |
@@ -175,22 +176,26 @@ tplink-modem clients --all-devices
 tplink-modem sample --all-devices
 ```
 
-Her MCP aracı isteğe bağlı `device` alır. Her cihazın kendi geçmişi var; varsayılan cihaz mevcut `presence.jsonl`
-dosyasını korur.
+Her MCP aracı isteğe bağlı `device` alır. Her cihazın kendi geçmişi var. Varsayılan cihaz mevcut geçmiş dosyalarını
+(`presence.jsonl`, `last.json`) korur; bu yüzden asıl routerınıza `default = true` yazın. Varsayılan cihazı değiştirmek
+geçmişleri takas eder, veri taşınmaz. MCP sunucusunun arka plan örnekleyicisi yalnız varsayılan cihazı kaydeder;
+diğerlerini zamanlayıcıda `tplink-modem sample --all-devices` ile kaydedin.
 
 ## Üst üste yanlış girişte cihaz kilitlenir
 
 TP-Link birkaç yanlış denemeden sonra yönetici girişini kilitler; sürekli deneyen bir zamanlayıcı kilidi açık
 bırakmaz. Router girişi üst üste üç kez reddedince `tplink-modem` o cihazı kilitler ve denemeyi bırakır. Tek bir ret oturum
 çakışması olabilir (router aynı anda tek yönetici oturumuna izin verir); bu yüzden yalnız kaç deneme kaldığını
-söyler, çalışan bir giriş sayacı sıfırlar. Kilitlenince:
+söyler, çalışan bir giriş sayacı sıfırlar. Routerın web arayüzünü tarayıcıda açık bırakmak da bu retlere yol açabilir. Kilitlenince:
 
 ```
 error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
 ```
 
 Kilit, cihazın adresi, kullanıcı adı ya da şifresi değişince kendiliğinden kalkar; bir de
-`tplink-modem unlock <cihaz>` ile kaldırılır. Yalnız reddedilen giriş sayılır; zaman aşımı ya da ulaşılamayan router
+`tplink-modem unlock <cihaz>` ile kaldırılır. Kilit 60 dakika sonra da sona erer (`TPLINK_LOCK_MINUTES`); o zaman
+tam bir giriş denenir. Başarısızsa cihaz bir süre daha kilitlenir, başarılıysa sayaç sıfırlanır. En kötü durumda saatte
+bir deneme olur. Yalnız reddedilen giriş sayılır; zaman aşımı ya da ulaşılamayan router
 ne sayılır ne sıfırlar. Durum dosyasında şifre değil, tuzlu bir özet durur.
 
 ## Cihaz geçmişi

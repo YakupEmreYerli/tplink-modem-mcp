@@ -9,6 +9,7 @@ import logging
 import os
 import re
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.server.mcpserver.exceptions import ToolError
@@ -24,6 +25,8 @@ READ = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=Fal
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 registry = Devices()
+DEVICE = Field(description="Name of a device from devices.toml (see the 'devices' command); omit for the default "
+                           "device.")
 # 0 = no background sampling, e.g. when `tplink-modem sample` runs from a timer and fills the same history.
 SAMPLE_SECONDS = int(os.environ.get("TPLINK_PRESENCE_INTERVAL", "60"))
 SEVERITY = ["emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"]
@@ -81,7 +84,7 @@ mcp = MCPServer(
 
 
 @mcp.tool(annotations=READ)
-async def router_status(device: str = "") -> dict:
+async def router_status(device: Annotated[str, DEVICE] = "") -> dict:
     """Overview: model and firmware, internet connection (status, external IP, uptime), LAN address, Wi-Fi
     networks that are on, number of devices online."""
     def read(c):
@@ -97,7 +100,7 @@ async def router_status(device: str = "") -> dict:
 
 
 @mcp.tool(annotations=READ)
-async def list_clients(include_inactive: bool = False, device: str = "") -> list[dict]:
+async def list_clients(include_inactive: bool = False, device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Devices on the network: hostname, IP, MAC, wired or Wi-Fi band and SSID, signal (dBm, closer to 0 is
     better; below -75 is weak) and link rate where the router reports them."""
     clients = await _run(_clients, device)
@@ -105,7 +108,7 @@ async def list_clients(include_inactive: bool = False, device: str = "") -> list
 
 
 @mcp.tool(annotations=READ)
-async def find_client(query: str, device: str = "") -> list[dict]:
+async def find_client(query: str, device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Devices whose hostname, IP or MAC contains the query (case-insensitive; '-' and ':' both work in MACs)."""
     q = query.lower().replace("-", ":")
     return [d for d in await _run(_clients, device)
@@ -114,7 +117,7 @@ async def find_client(query: str, device: str = "") -> list[dict]:
 
 
 @mcp.tool(annotations=READ)
-async def client_history(since_hours: float = 24, mac: str = "", limit: int = 200, device: str = "") -> list[dict]:
+async def client_history(since_hours: float = 24, mac: str = "", limit: int = 200, device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Join / leave / IP-change events recorded by this server (routers keep no such log). Shows which device
     keeps dropping off the network and when. Each device has its own history. Sampled every TPLINK_PRESENCE_INTERVAL seconds (default 60) while
     the server runs."""
@@ -122,7 +125,7 @@ async def client_history(since_hours: float = 24, mac: str = "", limit: int = 20
 
 
 @mcp.tool(annotations=READ)
-async def wifi_networks(device: str = "") -> list[dict]:
+async def wifi_networks(device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Every SSID the router has, with band, channel, standard and whether it is on."""
     def read(c):
         if not hasattr(c, "wifi_networks"):
@@ -132,7 +135,7 @@ async def wifi_networks(device: str = "") -> list[dict]:
 
 
 @mcp.tool(annotations=READ)
-async def router_logs(module: str = "", contains: str = "", max_severity: int = 7, limit: int = 100, device: str = "") -> list[dict]:
+async def router_logs(module: str = "", contains: str = "", max_severity: int = 7, limit: int = 100, device: Annotated[str, DEVICE] = "") -> list[dict]:
     """System log, newest first. module: e.g. DHCPD, PPP, DHCPC, SYSTEM. contains: text or a MAC to look for.
     max_severity: 0 emerg, 3 err, 4 warn, 6 info, 7 debug (everything). Note: the router clears it on reboot."""
     def read(c):
@@ -153,19 +156,19 @@ async def router_logs(module: str = "", contains: str = "", max_severity: int = 
 
 
 @mcp.tool(annotations=READ)
-async def dhcp_leases(device: str = "") -> list[dict]:
+async def dhcp_leases(device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Active DHCP leases: hostname, IP, MAC, lease time left."""
     return plain(await _run(lambda c: c.get_ipv4_dhcp_leases(), device))
 
 
 @mcp.tool(annotations=READ)
-async def dhcp_reservations(device: str = "") -> list[dict]:
+async def dhcp_reservations(device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Fixed IP reservations (address reservation) configured on the router."""
     return plain(await _run(lambda c: c.get_ipv4_reservations(), device))
 
 
 @mcp.tool(annotations=READ)
-async def ipv6_status(device: str = "") -> dict:
+async def ipv6_status(device: Annotated[str, DEVICE] = "") -> dict:
     """WAN and LAN IPv6 status, if the model supports it."""
     return plain(await _run(lambda c: c.get_ipv6_status(), device))
 
@@ -211,7 +214,7 @@ def write_tool(fn):
 
 @mcp.tool(annotations=READ)
 @_explain
-async def router_objects(contains: str = "", device: str = "") -> dict:
+async def router_objects(contains: str = "", device: Annotated[str, DEVICE] = "") -> dict:
     """Names of every settings object the router's web UI uses (LAN_WLAN, LAN_DHCP_STATIC_ADDR,
     WAN_IP_CONN_PORTMAPPING, FIREWALL, ...) and the operations it can run (ACT_REBOOT, ...). Filter with contains."""
     def read(c):
@@ -224,7 +227,7 @@ async def router_objects(contains: str = "", device: str = "") -> dict:
 
 @mcp.tool(annotations=READ)
 @_explain
-async def router_read(object: str, stack: str = "", attributes: list[str] | None = None, device: str = "") -> list[dict]:
+async def router_read(object: str, stack: str = "", attributes: list[str] | None = None, device: Annotated[str, DEVICE] = "") -> list[dict]:
     """Read a settings object: every instance, or the one at stack (e.g. "1,2"). Each row carries its _stack, which
     router_change needs. Passwords and keys are masked unless TPLINK_SHOW_SECRETS=1."""
     return await _run(lambda c: control.DataModel(c).read(object, stack, attributes), device)
@@ -233,7 +236,7 @@ async def router_read(object: str, stack: str = "", attributes: list[str] | None
 @write_tool
 async def router_change(action: str, object: str, stack: str = "", parent_stack: str = "",
                         attributes: dict[str, str] | None = None, confirm: bool = False,
-                        device: str = "", ctx: Context | None = None) -> dict:
+                        device: Annotated[str, DEVICE] = "", ctx: Context | None = None) -> dict:
     """Change any setting the web UI can change. action: "set" (stack = the row's _stack; omit for single objects),
     "add" (parent_stack = the parent row's _stack, e.g. "1" for LAN_DHCP_STATIC_ADDR under LAN 1) or "delete".
     Read the object first so attribute names match. Without confirm=true it only shows what it would do."""
@@ -248,7 +251,7 @@ async def router_change(action: str, object: str, stack: str = "", parent_stack:
 
 
 @write_tool
-async def router_run(operation: str, confirm: bool = False, device: str = "", ctx: Context | None = None) -> dict:
+async def router_run(operation: str, confirm: bool = False, device: Annotated[str, DEVICE] = "", ctx: Context | None = None) -> dict:
     """Run a router operation from router_objects' list, such as ACT_DHCP_RENEW or ACT_PPP_DISCONN.
     Without confirm=true it only shows what it would do."""
     op = operation.strip().upper()
@@ -268,7 +271,7 @@ def _norm_mac(mac: str) -> str:
 
 
 @write_tool
-async def set_static_ip(mac: str, ip: str, confirm: bool = False, device: str = "", ctx: Context | None = None) -> dict:
+async def set_static_ip(mac: str, ip: str, confirm: bool = False, device: Annotated[str, DEVICE] = "", ctx: Context | None = None) -> dict:
     """Give a device a fixed IP (address reservation): adds it, or updates the existing reservation for that MAC.
     The device gets the address the next time it renews its lease. Without confirm=true it only shows the plan."""
     mac = _norm_mac(mac)
@@ -294,7 +297,7 @@ async def set_static_ip(mac: str, ip: str, confirm: bool = False, device: str = 
 
 
 @write_tool
-async def remove_static_ip(mac: str, confirm: bool = False, device: str = "", ctx: Context | None = None) -> dict:
+async def remove_static_ip(mac: str, confirm: bool = False, device: Annotated[str, DEVICE] = "", ctx: Context | None = None) -> dict:
     """Remove a device's fixed IP reservation. Without confirm=true it only shows the plan."""
     mac = _norm_mac(mac)
     control.check_allowed("LAN_DHCP_STATIC_ADDR")
@@ -312,7 +315,7 @@ async def remove_static_ip(mac: str, confirm: bool = False, device: str = "", ct
 
 @write_tool
 async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabled: bool | None = None,
-                   hidden: bool | None = None, confirm: bool = False, device: str = "",
+                   hidden: bool | None = None, confirm: bool = False, device: Annotated[str, DEVICE] = "",
                    ctx: Context | None = None) -> dict:
     """Change a Wi-Fi network (index from wifi_networks): name, password, on/off, hidden. Devices on it drop and
     must reconnect, with the new password if it changed. Without confirm=true it only shows the plan."""
@@ -341,7 +344,7 @@ async def set_wifi(network_index: int, ssid: str = "", password: str = "", enabl
 
 
 @write_tool
-async def reboot_router(confirm: bool = False, device: str = "", ctx: Context | None = None) -> str:
+async def reboot_router(confirm: bool = False, device: Annotated[str, DEVICE] = "", ctx: Context | None = None) -> str:
     """Reboot the router. The whole network and the internet drop for a minute or two. Needs confirm=true."""
     control.check_allowed("ACT_REBOOT")
     if not confirm:

@@ -196,3 +196,65 @@ def test_wrong_password_answer_still_locks():
         error = err
     r, _ = router(error)
     refuse(r)
+
+
+@pytest.mark.parametrize("message", [
+    "TplinkRouter - MR - Login failed, wrong password. Auth times: 1/5",
+    "TplinkRouter - TplinkRouterV1_11 - Login failed: -5002",
+])
+def test_library_login_failed_wordings_are_auth_failures_without_retry(message):
+    r, client = router(ClientException(message))
+    refuse(r, 1)
+    assert client.logins == 1  # not the generic retry branch: a second wrong login would be sent
+    assert lock.failures(r.config) == 1
+
+
+def test_login_timeout_wording_is_not_auth_failure():
+    r, _ = router(ClientException("Login timed out"))
+    with pytest.raises(ClientException):
+        r.call(lambda c: 1)
+    assert lock.failures(r.config) == 0
+
+
+@pytest.fixture
+def clock(monkeypatch):
+    now = [1_000_000.0]
+    monkeypatch.setattr(lock, "_now", lambda: now[0])
+    return now
+
+
+def test_lock_expires_after_default_60_minutes_then_one_attempt(clock):
+    r, client = router(AuthorizeError("login refused"))
+    refuse(r)
+    assert lock.is_locked(r.config)
+    clock[0] += 59 * 60
+    with pytest.raises(lock.LoginLocked):
+        r.call(lambda c: 1)
+    assert client.logins == 3
+    clock[0] += 2 * 60
+    assert not lock.is_locked(r.config)
+    e = refuse(r, 1)  # exactly one attempt, which fails: locked again for a full period
+    assert client.logins == 4 and "unlock home" in str(e)
+    with pytest.raises(lock.LoginLocked):
+        r.call(lambda c: 1)
+    assert client.logins == 4
+    clock[0] += 61 * 60
+    client.error = None
+    assert r.call(lambda c: 9) == 9  # success after expiry resets the counter
+    assert lock.failures(r.config) == 0
+
+
+def test_lock_minutes_env(clock, monkeypatch):
+    monkeypatch.setenv("TPLINK_LOCK_MINUTES", "5")
+    r, _ = router(AuthorizeError("login refused"))
+    refuse(r)
+    clock[0] += 6 * 60
+    assert not lock.is_locked(r.config)
+
+
+def test_lock_file_is_private_and_written_atomically(state):
+    r, _ = router(AuthorizeError("login refused"))
+    refuse(r, 1)
+    f = state / "locks" / "home.json"
+    assert f.stat().st_mode & 0o777 == 0o600
+    assert [p.name for p in f.parent.iterdir()] == ["home.json"]  # no temp file left behind

@@ -111,3 +111,15 @@ def test_use_switches_default_for_this_process(tmp_path):
     assert d.config("").name == "upstairs"
     with pytest.raises(ValueError):
         d.use("nope")
+
+
+@pytest.mark.parametrize("second", ["a_b", "A-B"])
+def test_names_that_share_a_password_variable_are_refused(tmp_path, second):
+    text = f'[[device]]\nname = "a-b"\nhost = "h"\n[[device]]\nname = "{second}"\nhost = "h2"\n'
+    with pytest.raises(ValueError, match="TPLINK_PASSWORD_A_B"):
+        conf(tmp_path, text)
+
+
+def test_single_device_table_gives_clear_error(tmp_path):
+    with pytest.raises(ValueError, match=r"\[\[device\]\]"):
+        conf(tmp_path, '[device]\nname = "a"\nhost = "h"\n')
