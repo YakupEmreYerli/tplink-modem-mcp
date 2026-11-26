@@ -54,6 +54,13 @@ def render(value, as_json: bool = False) -> str:
     return _cell(value)
 
 
+def _key_value(text: str) -> tuple[str, str]:
+    key, eq, value = text.partition("=")
+    if not eq or not key:
+        raise argparse.ArgumentTypeError(f"expected KEY=VALUE, got {text!r}")
+    return key, value
+
+
 def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="tplink-modem",
@@ -87,6 +94,36 @@ def _parser() -> argparse.ArgumentParser:
     c.add_argument("object")
     c.add_argument("--stack", default="")
     c.add_argument("--attr", action="append", dest="attributes", help="only this attribute (repeatable)")
+    def change(name, help):
+        c = sub.add_parser(name, help=help)
+        c.add_argument("--confirm", action="store_true", help="apply it (without this it only shows the plan)")
+        return c
+    c = change("change", "change any setting the web UI can: set a row, add one, or delete one")
+    c.add_argument("action", choices=["set", "add", "delete"])
+    c.add_argument("object")
+    c.add_argument("--stack", default="", help="the row's _stack from 'read' (set, delete)")
+    c.add_argument("--parent-stack", default="", help="the parent row's _stack (add)")
+    c.add_argument("--set", action="append", type=_key_value, dest="attributes", metavar="KEY=VALUE",
+                   help="attribute to write (repeatable)")
+    c = change("run", "run a router operation from 'objects', such as ACT_DHCP_RENEW")
+    c.add_argument("operation")
+    c = change("static-ip", "give a device a fixed IP (adds or updates its reservation)")
+    c.add_argument("mac")
+    c.add_argument("ip")
+    c = change("unset-static-ip", "remove a device's fixed IP reservation")
+    c.add_argument("mac")
+    c = change("set-wifi", "change a Wi-Fi network (index from 'wifi'): name, password, on/off, hidden")
+    c.add_argument("index", type=int)
+    c.add_argument("--ssid", default="")
+    c.add_argument("--password", default="")
+    on = c.add_mutually_exclusive_group()
+    on.add_argument("--on", dest="enabled", action="store_const", const=True)
+    on.add_argument("--off", dest="enabled", action="store_const", const=False)
+    hid = c.add_mutually_exclusive_group()
+    hid.add_argument("--hidden", dest="hidden", action="store_const", const=True)
+    hid.add_argument("--visible", dest="hidden", action="store_const", const=False)
+    change("reboot", "reboot the router (network and internet drop for a minute or two)")
+
     sub.add_parser("sample", help="take one presence sample for the history (for a timer)")
     sub.add_parser("mcp", help="run the MCP server on stdin/stdout")
     return p
@@ -118,7 +155,34 @@ def _call(a: argparse.Namespace):
             return server.router_objects(a.contains)
         case "read":
             return server.router_read(a.object, stack=a.stack, attributes=a.attributes)
+        case "change":
+            return server.router_change(a.action, a.object, stack=a.stack, parent_stack=a.parent_stack,
+                                        attributes=dict(a.attributes) if a.attributes else None, confirm=a.confirm)
+        case "run":
+            return server.router_run(a.operation, confirm=a.confirm)
+        case "static-ip":
+            return server.set_static_ip(a.mac, a.ip, confirm=a.confirm)
+        case "unset-static-ip":
+            return server.remove_static_ip(a.mac, confirm=a.confirm)
+        case "set-wifi":
+            return server.set_wifi(a.index, ssid=a.ssid, password=a.password, enabled=a.enabled, hidden=a.hidden,
+                                   confirm=a.confirm)
+        case "reboot":
+            return server.reboot_router(confirm=a.confirm)
     raise ValueError(f"unknown command {a.command}")
+
+
+def _for_cli(result):
+    """Previews speak of the MCP's confirm=true; on the command line that is --confirm."""
+    if isinstance(result, str):
+        return result.replace("confirm=true", "--confirm")
+    if isinstance(result, dict) and result.get("status") == "not applied" and "would_do" in result:
+        lines = [f"would do: {result['would_do']}"]
+        if result.get("current") is not None:
+            lines.append("current:\n" + render(result["current"]))
+        lines.append("Not applied. Run again with --confirm to apply.")
+        return "\n".join(lines)
+    return result
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -134,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as e:  # router, policy and argument errors: one readable line
         print(f"error: {e}", file=sys.stderr)
         return 1
-    print(render(result, a.json))
+    print(render(result if a.json else _for_cli(result), a.json))
     return 0
 
 

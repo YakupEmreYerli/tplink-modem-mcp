@@ -87,3 +87,74 @@ def test_unknown_command_exit_2():
     with pytest.raises(SystemExit) as e:
         cli.main(["nope"])
     assert e.value.code == 2
+
+
+# ----- changes -----
+
+def fake_change(calls):
+    async def fake(action, object, stack="", parent_stack="", attributes=None, confirm=False, ctx=None):
+        calls.update(action=action, object=object, stack=stack, attributes=attributes, confirm=confirm)
+        if not confirm:
+            return {"status": "not applied", "would_do": f"{action} {object} at {stack}", "next": "..."}
+        return {"status": "applied"}
+    return fake
+
+
+def test_change_without_confirm_previews(monkeypatch, capsys):
+    calls = {}
+    monkeypatch.setattr(server, "router_change", fake_change(calls))
+    assert cli.main(["change", "set", "LAN_WLAN", "--stack", "1,1", "--set", "SSID=Home"]) == 0
+    assert calls["confirm"] is False and calls["attributes"] == {"SSID": "Home"}
+    out = capsys.readouterr().out
+    assert "set LAN_WLAN at 1,1" in out and "--confirm" in out
+
+
+def test_change_confirm_passes_true(monkeypatch):
+    calls = {}
+    monkeypatch.setattr(server, "router_change", fake_change(calls))
+    assert cli.main(["change", "set", "LAN_WLAN", "--stack", "1,1", "--set", "SSID=Home", "--confirm"]) == 0
+    assert calls["confirm"] is True
+
+
+def test_set_without_equals_exit_2():
+    with pytest.raises(SystemExit) as e:
+        cli.main(["change", "set", "LAN_WLAN", "--set", "bad"])
+    assert e.value.code == 2
+
+
+def test_set_wifi_preview_masks_password(monkeypatch, capsys):
+    monkeypatch.delenv("TPLINK_WRITE", raising=False)
+    monkeypatch.delenv("TPLINK_ALLOW", raising=False)
+    monkeypatch.delenv("TPLINK_DENY", raising=False)
+    assert cli.main(["set-wifi", "1", "--password", "supersecret1"]) == 0
+    out = capsys.readouterr().out
+    assert "supersecret1" not in out and "***" in out
+
+
+def test_static_ip_bad_mac(capsys):
+    assert cli.main(["static-ip", "zz", "192.168.1.9"]) == 1
+    assert "not a MAC address" in capsys.readouterr().err
+
+
+def test_writes_disabled(monkeypatch, capsys):
+    monkeypatch.setenv("TPLINK_WRITE", "off")
+    assert cli.main(["reboot", "--confirm"]) == 1
+    assert "TPLINK_WRITE" in capsys.readouterr().err
+
+
+def test_reboot_without_confirm_does_not_reboot(monkeypatch, capsys):
+    monkeypatch.delenv("TPLINK_WRITE", raising=False)
+    monkeypatch.setattr(server.router, "call", lambda fn: pytest.fail("router was called"))
+    assert cli.main(["reboot"]) == 0
+    assert "--confirm" in capsys.readouterr().out
+
+
+def test_static_ip_forwards(monkeypatch):
+    seen = {}
+
+    async def fake(mac, ip, confirm=False, ctx=None):
+        seen.update(mac=mac, ip=ip, confirm=confirm)
+        return {"status": "applied"}
+    monkeypatch.setattr(server, "set_static_ip", fake)
+    assert cli.main(["static-ip", "aa-bb-cc-dd-ee-ff", "192.168.1.9", "--confirm"]) == 0
+    assert seen == {"mac": "aa-bb-cc-dd-ee-ff", "ip": "192.168.1.9", "confirm": True}
