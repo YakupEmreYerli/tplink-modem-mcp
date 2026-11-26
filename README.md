@@ -113,8 +113,9 @@ Claude Desktop, Cursor and other clients that take a JSON config:
 
 From a clone instead of PyPI: `uv --directory /path/to/tplink-modem run tplink-modem mcp`.
 
-This project was called `tplink-modem-mcp` before 0.3.0. The old `tplink-modem-mcp` command still starts the MCP
-server, and the old presence history folder keeps being used if it exists.
+This project was called `tplink-modem-mcp` before 0.3.0. If your config runs `uvx tplink-modem-mcp`, change it to
+`uvx tplink-modem mcp`: the last `tplink-modem-mcp` release only installs `tplink-modem`, which keeps the old
+`tplink-modem-mcp` command working. The old presence history folder keeps being used if it exists.
 
 ## Settings
 

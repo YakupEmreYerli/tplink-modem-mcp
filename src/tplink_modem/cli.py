@@ -68,34 +68,40 @@ def _parser() -> argparse.ArgumentParser:
                     "TPLINK_USERNAME (default admin) and TPLINK_PASSWORD.",
         epilog="Changes only show what they would do until you add --confirm.")
     p.add_argument("--json", action="store_true", help="print the raw result as JSON")
+    # --json also works after the command name; SUPPRESS keeps a value given before it.
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="print the raw result as JSON")
     sub = p.add_subparsers(dest="command", required=True, metavar="COMMAND")
 
-    sub.add_parser("status", help="model, firmware, internet connection, Wi-Fi networks that are on, devices online")
-    c = sub.add_parser("clients", help="devices on the network with IP, MAC, band, signal and link rate")
+    def add(name, **kw):
+        return sub.add_parser(name, parents=[common], **kw)
+
+    add("status", help="model, firmware, internet connection, Wi-Fi networks that are on, devices online")
+    c = add("clients", help="devices on the network with IP, MAC, band, signal and link rate")
     c.add_argument("--all", action="store_true", help="include devices that are not connected now")
-    c = sub.add_parser("find", help="devices whose name, IP or MAC contains the text")
+    c = add("find", help="devices whose name, IP or MAC contains the text")
     c.add_argument("query")
-    c = sub.add_parser("history", help="join / leave / IP-change events recorded by the sampler")
+    c = add("history", help="join / leave / IP-change events recorded by the sampler")
     c.add_argument("--hours", type=float, default=24)
     c.add_argument("--mac", default="")
     c.add_argument("--limit", type=int, default=200)
-    sub.add_parser("wifi", help="every Wi-Fi network with band, channel and whether it is on")
-    c = sub.add_parser("logs", help="system log, newest first")
+    add("wifi", help="every Wi-Fi network with band, channel and whether it is on")
+    c = add("logs", help="system log, newest first")
     c.add_argument("--module", default="", help="e.g. DHCPD, PPP, DHCPC, SYSTEM")
     c.add_argument("--contains", default="", help="text or a MAC to look for")
     c.add_argument("--max-severity", type=int, default=7, help="0 emerg, 3 err, 4 warn, 6 info, 7 debug")
     c.add_argument("--limit", type=int, default=100)
-    sub.add_parser("leases", help="active DHCP leases")
-    sub.add_parser("reservations", help="fixed IP reservations")
-    sub.add_parser("ipv6", help="WAN and LAN IPv6 status")
-    c = sub.add_parser("objects", help="settings objects and operations the router's web UI uses")
+    add("leases", help="active DHCP leases")
+    add("reservations", help="fixed IP reservations")
+    add("ipv6", help="WAN and LAN IPv6 status")
+    c = add("objects", help="settings objects and operations the router's web UI uses")
     c.add_argument("contains", nargs="?", default="")
-    c = sub.add_parser("read", help="read a settings object (every row, or the one at --stack)")
+    c = add("read", help="read a settings object (every row, or the one at --stack)")
     c.add_argument("object")
     c.add_argument("--stack", default="")
     c.add_argument("--attr", action="append", dest="attributes", help="only this attribute (repeatable)")
     def change(name, help):
-        c = sub.add_parser(name, help=help)
+        c = add(name, help=help)
         c.add_argument("--confirm", action="store_true", help="apply it (without this it only shows the plan)")
         return c
     c = change("change", "change any setting the web UI can: set a row, add one, or delete one")
@@ -124,8 +130,8 @@ def _parser() -> argparse.ArgumentParser:
     hid.add_argument("--visible", dest="hidden", action="store_const", const=False)
     change("reboot", "reboot the router (network and internet drop for a minute or two)")
 
-    sub.add_parser("sample", help="take one presence sample for the history (for a timer)")
-    sub.add_parser("mcp", help="run the MCP server on stdin/stdout")
+    add("sample", help="take one presence sample for the history (for a timer)")
+    add("mcp", help="run the MCP server on stdin/stdout")
     return p
 
 
@@ -199,7 +205,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 1
     print(render(result if a.json else _for_cli(result), a.json))
-    return 0
+    refused = isinstance(result, dict) and result.get("status") == "not applied" and "reason" in result
+    return 1 if refused else 0
 
 
 if __name__ == "__main__":

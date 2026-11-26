@@ -158,3 +158,19 @@ def test_static_ip_forwards(monkeypatch):
     monkeypatch.setattr(server, "set_static_ip", fake)
     assert cli.main(["static-ip", "aa-bb-cc-dd-ee-ff", "192.168.1.9", "--confirm"]) == 0
     assert seen == {"mac": "aa-bb-cc-dd-ee-ff", "ip": "192.168.1.9", "confirm": True}
+
+
+def test_json_flag_after_command(monkeypatch, capsys):
+    async def fake():
+        return {"client_class": "x"}
+    monkeypatch.setattr(server, "router_status", fake)
+    assert cli.main(["status", "--json"]) == 0
+    assert json.loads(capsys.readouterr().out)["client_class"] == "x"
+
+
+def test_refusal_exits_1(monkeypatch, capsys):
+    async def fake(mac, ip, confirm=False, ctx=None):
+        return {"status": "not applied", "reason": "192.168.1.9 is already reserved for AA:BB:CC:DD:EE:01"}
+    monkeypatch.setattr(server, "set_static_ip", fake)
+    assert cli.main(["static-ip", "aa:bb:cc:dd:ee:ff", "192.168.1.9"]) == 1
+    assert "already reserved" in capsys.readouterr().out

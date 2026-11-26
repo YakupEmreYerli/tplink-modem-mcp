@@ -116,8 +116,9 @@ Claude Desktop, Cursor ve JSON ayar dosyası kullanan öteki istemciler:
 
 PyPI yerine indirdiğin kopyadan çalıştırmak için: `uv --directory /yol/tplink-modem run tplink-modem mcp`.
 
-Projenin adı 0.3.0'dan önce `tplink-modem-mcp` idi. Eski `tplink-modem-mcp` komutu MCP sunucusunu açmaya devam eder;
-eski cihaz geçmişi klasörü varsa geçmiş oradan okunur.
+Projenin adı 0.3.0'dan önce `tplink-modem-mcp` idi. Ayarında `uvx tplink-modem-mcp` yazıyorsa `uvx tplink-modem mcp`
+olarak değiştir: `tplink-modem-mcp`'nin son sürümü yalnız `tplink-modem`'i kurar, eski `tplink-modem-mcp` komutu da
+çalışmaya devam eder. Eski cihaz geçmişi klasörü varsa geçmiş oradan okunur.
 
 ## Ayarlar
 
