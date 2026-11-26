@@ -3,7 +3,7 @@
 ## Setup
 
 ```sh
-git clone https://github.com/YakupEmreYerli/tplink-modem-mcp && cd tplink-modem-mcp
+git clone https://github.com/YakupEmreYerli/tplink-modem && cd tplink-modem
 uv sync
 uv run pytest -q
 ```
@@ -13,7 +13,7 @@ The tests need no router: they start the real server over stdio against an addre
 To try it on your own router:
 
 ```sh
-TPLINK_PASSWORD=... TPLINK_LOG=DEBUG uv run tplink-modem-mcp sample
+TPLINK_PASSWORD=... TPLINK_LOG=DEBUG uv run tplink-modem sample
 ```
 
 `sample` logs in, reads the client list once and prints any join or leave events, so it is a quick check that

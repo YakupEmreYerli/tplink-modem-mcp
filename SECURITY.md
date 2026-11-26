@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please do not open a public issue. Use GitHub's private reporting instead:
-[Report a vulnerability](https://github.com/YakupEmreYerli/tplink-modem-mcp/security/advisories/new).
+[Report a vulnerability](https://github.com/YakupEmreYerli/tplink-modem/security/advisories/new).
 You will get an answer within a week.
 
 ## Scope

@@ -1,6 +1,6 @@
 import pytest
 
-from tplink_modem_mcp import control
+from tplink_modem import control
 
 
 def test_policy(monkeypatch):

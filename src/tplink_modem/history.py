@@ -8,8 +8,16 @@ import threading
 import time
 from pathlib import Path
 
-STATE = Path(os.environ.get("TPLINK_STATE_DIR")
-             or Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state")) / "tplink-modem-mcp")
+def _state_dir() -> Path:
+    """TPLINK_STATE_DIR, else the folder of the old tplink-modem-mcp name if it exists, else tplink-modem."""
+    if os.environ.get("TPLINK_STATE_DIR"):
+        return Path(os.environ["TPLINK_STATE_DIR"])
+    base = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local/state"))
+    old = base / "tplink-modem-mcp"
+    return old if old.is_dir() else base / "tplink-modem"
+
+
+STATE = _state_dir()
 
 
 class History:

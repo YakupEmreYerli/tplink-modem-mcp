@@ -14,7 +14,7 @@ WRITE_TOOLS = {"router_change", "router_run", "set_static_ip", "remove_static_ip
 def params(tmp_path, **extra):
     env = {**os.environ, "TPLINK_PRESENCE_INTERVAL": "0", "TPLINK_STATE_DIR": str(tmp_path),
            "TPLINK_HOST": "http://127.0.0.1:9", "TPLINK_PASSWORD": "x", **extra}
-    return StdioServerParameters(command=sys.executable, args=["-m", "tplink_modem_mcp.server"], env=env)
+    return StdioServerParameters(command=sys.executable, args=["-m", "tplink_modem.server"], env=env)
 
 
 @pytest.mark.anyio

@@ -1,4 +1,5 @@
-from tplink_modem_mcp.history import History
+from tplink_modem import history
+from tplink_modem.history import History
 
 
 def dev(mac, ip, name="phone"):
@@ -32,3 +33,21 @@ def test_query_filters_by_mac_in_any_notation(tmp_path):
     h.sample([])
     h.sample([dev("aa:bb:cc:00:00:01", "192.168.1.10"), dev("aa:bb:cc:00:00:02", "192.168.1.11")])
     assert [e["mac"] for e in h.query(mac="AA-BB-CC-00-00-02")] == ["aa:bb:cc:00:00:02"]
+
+
+def test_state_dir_prefers_existing_old_folder(tmp_path, monkeypatch):
+    monkeypatch.delenv("TPLINK_STATE_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    (tmp_path / "tplink-modem-mcp").mkdir()
+    assert history._state_dir() == tmp_path / "tplink-modem-mcp"
+
+
+def test_state_dir_new_name_when_no_old(tmp_path, monkeypatch):
+    monkeypatch.delenv("TPLINK_STATE_DIR", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path))
+    assert history._state_dir() == tmp_path / "tplink-modem"
+
+
+def test_state_dir_env_wins(tmp_path, monkeypatch):
+    monkeypatch.setenv("TPLINK_STATE_DIR", str(tmp_path / "x"))
+    assert history._state_dir() == tmp_path / "x"

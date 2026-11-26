@@ -19,13 +19,13 @@ from . import control
 from .history import History
 from .router import Router, plain
 
-log = logging.getLogger("tplink_modem_mcp")
+log = logging.getLogger("tplink_modem")
 READ = ToolAnnotations(readOnlyHint=True, idempotentHint=True, openWorldHint=False)
 WRITE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 router = Router()
 history = History()
-# 0 = no background sampling, e.g. when `tplink-modem-mcp sample` runs from a timer and fills the same history.
+# 0 = no background sampling, e.g. when `tplink-modem sample` runs from a timer and fills the same history.
 SAMPLE_SECONDS = int(os.environ.get("TPLINK_PRESENCE_INTERVAL", "60"))
 SEVERITY = ["emerg", "alert", "crit", "err", "warn", "notice", "info", "debug"]
 
@@ -351,7 +351,7 @@ async def reboot_router(confirm: bool = False, ctx: Context | None = None) -> st
 
 
 def sample_once() -> int:
-    """`tplink-modem-mcp sample`: one presence sample for a timer (cron, systemd); prints the new events."""
+    """`tplink-modem sample`: one presence sample for a timer (cron, systemd); prints the new events."""
     import json
     events = history.sample([d for d in router.call(_clients) if d["active"]])
     for e in events:
