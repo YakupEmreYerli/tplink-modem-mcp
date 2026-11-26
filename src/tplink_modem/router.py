@@ -34,9 +34,10 @@ def is_auth_failure(e: Exception) -> bool:
     answers are not: they must not lock the device."""
     cause = e
     while cause is not None:
-        if isinstance(cause, (requests.RequestException, OSError)):
+        # An answer that is not JSON (empty page, wrong device at that address) is no credential refusal either.
+        if isinstance(cause, (requests.RequestException, OSError, ValueError)):
             return False
-        cause = cause.__cause__
+        cause = cause.__cause__ or cause.__context__
     if isinstance(e, AuthorizeError):
         return not str(e).startswith(_NOT_CREDENTIALS)
     # tplinkrouterc6u clients (Archer, MR, ...) raise a plain ClientException once the login answer is wrong.

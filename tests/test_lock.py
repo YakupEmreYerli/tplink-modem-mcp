@@ -133,3 +133,33 @@ def test_locks_are_per_device():
 def test_legacy_client_reports_refusal_as_auth_failure():
     from tplink_modem.legacy import LoginRefused
     assert issubclass(LoginRefused, AuthorizeError)
+
+
+def test_non_json_answer_does_not_lock():
+    """The library says 'Cannot authorize' for any bad login answer; an empty or HTML page is not a refusal."""
+    try:
+        try:
+            import json
+            json.loads("")
+        except ValueError as inner:
+            raise ClientException("TplinkRouter - Cannot authorize! Error - Expecting value; Response - ")
+    except ClientException as err:
+        error = err
+    r, _ = router(error)
+    with pytest.raises(ClientException):
+        r.call(lambda c: 1)
+    assert not lock.is_locked(r.config)
+
+
+def test_wrong_password_answer_still_locks():
+    """A JSON answer without a session token (KeyError) is the router refusing the login."""
+    try:
+        try:
+            {}["stok"]
+        except KeyError:
+            raise ClientException("TplinkRouter - Cannot authorize! Error - 'stok'; Response - {'success': False}")
+    except ClientException as err:
+        error = err
+    r, _ = router(error)
+    with pytest.raises(LoginFailed):
+        r.call(lambda c: 1)
