@@ -141,6 +141,52 @@ TP-Link routers allow one admin session at a time. Calls go through a single sha
 client keeps its login for two minutes, so the web UI may ask you to take over the session while the server is in
 use.
 
+## Several devices
+
+With one router, the environment variables above are all you need. For more, list the routers in
+`$XDG_CONFIG_HOME/tplink-modem/devices.toml` (or the file named by `TPLINK_CONFIG`):
+
+```toml
+[[device]]
+name = "upstairs"
+host = "192.168.1.1"
+default = true          # used when no device is named
+
+[[device]]
+name = "garage-ap"
+host = "192.168.0.5"
+username = "admin"      # optional, default admin
+client = "legacy"       # optional, as TPLINK_CLIENT
+```
+
+Passwords are never kept in the file. Each device reads `TPLINK_PASSWORD_<NAME>` (name in capitals, `-` as `_`, so
+`TPLINK_PASSWORD_GARAGE_AP`); the default device also accepts plain `TPLINK_PASSWORD`. Without the file nothing
+changes.
+
+```sh
+tplink-modem devices                       # name, host, default, locked
+tplink-modem --device garage-ap status
+tplink-modem find iphone --all-devices     # which router is a device on?
+tplink-modem clients --all-devices
+tplink-modem sample --all-devices
+```
+
+Every MCP tool takes an optional `device`. Each device has its own presence history; the default device keeps the
+existing `presence.jsonl`.
+
+## Failed logins lock the device
+
+TP-Link locks the admin login after a few wrong attempts, and a timer that keeps trying would keep it locked. When a
+router refuses a login, `tplink-modem` records a lock for that device and stops trying:
+
+```
+error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
+```
+
+The lock lifts by itself when the device's host, username or password changes, or with `tplink-modem unlock <device>`.
+Only a refused login locks; a timeout or an unreachable router does not. The lock file stores a salted hash, never the
+password.
+
 ## Presence history
 
 Routers do not remember when a device came and went, so the server samples the client list once a minute and

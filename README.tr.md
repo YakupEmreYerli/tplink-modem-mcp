@@ -145,6 +145,52 @@ TP-Link modemler aynı anda tek yönetici oturumuna izin verir. Sunucu bütün i
 eski tip istemci de girişini iki dakika açık tutar. Bu yüzden sunucu kullanılırken modemin arayüzü oturumu
 devralmak isteyip istemediğini sorabilir.
 
+## Birden çok cihaz
+
+Tek router için yukarıdaki ortam değişkenleri yeter. Daha fazlası için routerları
+`$XDG_CONFIG_HOME/tplink-modem/devices.toml` dosyasına yazın (ya da `TPLINK_CONFIG` ile başka dosya gösterin):
+
+```toml
+[[device]]
+name = "upstairs"
+host = "192.168.1.1"
+default = true          # cihaz adı verilmezse bu kullanılır
+
+[[device]]
+name = "garage-ap"
+host = "192.168.0.5"
+username = "admin"      # isteğe bağlı, varsayılan admin
+client = "legacy"       # isteğe bağlı, TPLINK_CLIENT gibi
+```
+
+Şifre dosyaya yazılmaz. Her cihaz `TPLINK_PASSWORD_<AD>` değişkenini okur (ad büyük harf, `-` yerine `_`:
+`TPLINK_PASSWORD_GARAGE_AP`); varsayılan cihaz düz `TPLINK_PASSWORD`'ü de kabul eder. Dosya yoksa hiçbir şey
+değişmez.
+
+```sh
+tplink-modem devices                       # ad, adres, varsayılan, kilitli mi
+tplink-modem --device garage-ap status
+tplink-modem find iphone --all-devices     # bu cihaz hangi routerda?
+tplink-modem clients --all-devices
+tplink-modem sample --all-devices
+```
+
+Her MCP aracı isteğe bağlı `device` alır. Her cihazın kendi geçmişi var; varsayılan cihaz mevcut `presence.jsonl`
+dosyasını korur.
+
+## Yanlış girişte cihaz kilitlenir
+
+TP-Link birkaç yanlış denemeden sonra yönetici girişini kilitler; sürekli deneyen bir zamanlayıcı kilidi açık
+bırakmaz. Router girişi reddedince `tplink-modem` o cihaz için kilit kaydı yazar ve denemeyi bırakır:
+
+```
+error: login to http://192.168.1.1 failed earlier; not retrying until the password changes or you run 'tplink-modem unlock upstairs'
+```
+
+Kilit, cihazın adresi, kullanıcı adı ya da şifresi değişince kendiliğinden kalkar; bir de
+`tplink-modem unlock <cihaz>` ile kaldırılır. Yalnız reddedilen giriş kilitler; zaman aşımı ya da ulaşılamayan router
+kilitlemez. Kilit dosyasında şifre değil, tuzlu bir özet durur.
+
 ## Cihaz geçmişi
 
 Modem, bir cihazın ne zaman gelip gittiğini hatırlamaz. Bu yüzden sunucu dakikada bir cihaz listesine bakar ve
