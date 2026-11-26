@@ -16,5 +16,5 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - name: Tag matches the package version
         run: test "${GITHUB_REF_NAME#legacy-v}" = "$(uv version --short --directory legacy)"
-      - run: uv build --directory legacy --out-dir dist
+      - run: uv build legacy --out-dir dist
       - uses: pypa/gh-action-pypi-publish@release/v1

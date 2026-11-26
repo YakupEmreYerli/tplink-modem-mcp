@@ -2,7 +2,7 @@
 # pulls in tplink-modem, which still provides the tplink-modem-mcp command.
 [project]
 name = "tplink-modem-mcp"
-version = "0.3.0"
+version = "0.3.1"
 description = "Renamed to tplink-modem: this package only installs tplink-modem"
 readme = "README.md"
 license = "GPL-3.0-or-later"
